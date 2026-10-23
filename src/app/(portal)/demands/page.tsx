@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { requireUser, isOfficial } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { formatDate, formatINR } from "@/lib/format";
+import { daysOverdue, formatDate, formatINR } from "@/lib/format";
 import { DEMAND_STATUS_LABELS } from "@/lib/labels";
 import { pageRange, param, searchTerm } from "@/lib/query";
 import type { AphRate, DemandOverview, DemandStatus, Institution } from "@/lib/types";
@@ -147,7 +147,12 @@ export default async function DemandsPage({ searchParams }: PageProps<"/demands"
                       {m.program && <div className="text-xs text-slate-500">{m.program}</div>}
                     </td>
                     <td className="num text-right">{formatINR(m.required_amount)}</td>
-                    <td className="num whitespace-nowrap">{formatDate(m.due_date)}</td>
+                    <td className="whitespace-nowrap">
+                      <div className="num">{formatDate(m.due_date)}</div>
+                      {m.is_overdue && m.status === "open" && (
+                        <div className="text-xs font-medium text-red-700">{daysOverdue(m.due_date)}d overdue</div>
+                      )}
+                    </td>
                     <td>
                       <DemandStatusBadge status={m.status} overdue={m.is_overdue} />
                       <div className="mt-0.5 text-xs text-slate-500">

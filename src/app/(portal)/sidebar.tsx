@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  Search,
   Settings,
   ShieldCheck,
   Undo2,
@@ -55,6 +56,18 @@ export async function Sidebar() {
 
   const nav = (
     <nav className="space-y-0.5">
+      <form action="/search" role="search" className="mb-3 px-1">
+        <div className="relative">
+          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-brand-200" />
+          <input
+            name="q"
+            type="search"
+            aria-label="Search deposits, releases, demands and institutions"
+            placeholder="Search the register…"
+            className="w-full rounded-md border border-white/15 bg-white/10 py-1.5 pr-2.5 pl-8 text-sm text-white placeholder:text-brand-200 focus:border-white/30 focus:ring-2 focus:ring-white/20 focus:outline-none"
+          />
+        </div>
+      </form>
       <NavLink href="/dashboard">
         <LayoutDashboard className={iconCls} /> Dashboard
       </NavLink>

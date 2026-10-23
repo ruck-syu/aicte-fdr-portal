@@ -39,6 +39,21 @@ export function formatBytes(bytes: number | null | undefined) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+/** Whole days between an ISO timestamp and now; null when there is no timestamp. */
+export function daysSince(value: string | null | undefined) {
+  if (!value) return null;
+  const ms = Date.now() - new Date(value).getTime();
+  return Math.max(0, Math.floor(ms / 86_400_000));
+}
+
+/** Whole days a due date is in the past (0 when it is today or still ahead). */
+export function daysOverdue(due: string | null | undefined) {
+  if (!due) return null;
+  const end = due.length === 10 ? new Date(`${due}T00:00:00+05:30`) : new Date(due);
+  const ms = Date.now() - end.getTime();
+  return ms > 0 ? Math.floor(ms / 86_400_000) : 0;
+}
+
 export function daysLabel(days: number) {
   if (days === 0) return "today";
   if (days > 0) return `in ${days} day${days === 1 ? "" : "s"}`;
