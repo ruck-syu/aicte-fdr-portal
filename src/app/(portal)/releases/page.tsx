@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Download } from "lucide-react";
 import { requireUser, isOfficial } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { formatDate, formatINR } from "@/lib/format";
@@ -80,6 +81,16 @@ export default async function ReleasesPage({ searchParams }: PageProps<"/release
           official
             ? "Applications to release or refund security deposits. Approve once closure / completion is established and the affidavit is on record."
             : "Requests to release your deposits. Start one from a verified deposit’s page."
+        }
+        actions={
+          official && (
+            <a
+              href={`/api/reports/releases${withParams(params, { page: null })}`}
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 shadow-xs hover:bg-slate-50"
+            >
+              <Download className="size-4" /> Export CSV
+            </a>
+          )
         }
       />
       {user.role === "release_officer" && cell && (

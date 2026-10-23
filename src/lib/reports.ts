@@ -1,7 +1,14 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { formatDate } from "./format";
-import { INSTRUMENT_SHORT, REGION_LABELS, RELEASE_REASON_LABELS, STATUS_LABELS, VALIDITY_LABELS } from "./labels";
+import {
+  INSTRUMENT_SHORT,
+  REGION_LABELS,
+  RELEASE_REASON_LABELS,
+  RELEASE_STATUS_LABELS,
+  STATUS_LABELS,
+  VALIDITY_LABELS,
+} from "./labels";
 import { param, searchTerm } from "./query";
 import type {
   DashboardStats,
@@ -11,6 +18,7 @@ import type {
   InstrumentType,
   Region,
   ReleaseOverview,
+  ReleaseStatus,
   Validity,
 } from "./types";
 
@@ -33,6 +41,7 @@ export const REPORTS = {
   "sanctioned-refunds": "Sanctioned refunds",
   kpis: "KPIs & service levels",
   deposits: "Full deposit register",
+  releases: "Full release register",
 } as const;
 export type ReportKey = keyof typeof REPORTS;
 
@@ -280,6 +289,96 @@ export async function runReport(supabase: SupabaseClient, key: ReportKey, params
           approval_valid_until: d.approval_valid_until,
           flags: d.open_flags,
         })),
+      };
+    }
+    case "releases": {
+      // Same filters as the Releases list page, including a clearance officer's cell queue.
+      const q = searchTerm(params.q);
+      const status = param(params.status);
+      const awaiting = param(params.awaiting) === "me";
+      const { data: claims } = await supabase.auth.getClaims();
+      const { data: me } = await supabase
+        .from("profiles")
+        .select("role, clearance_cell")
+        .eq("id", claims?.claims?.sub ?? "")
+        .maybeSingle();
+      const cell = me?.role === "release_officer" ? (me.clearance_cell as string | null) : null;
+      let mine: string[] = [];
+      if (awaiting && cell) {
+        const { data: pending } = await supabase
+          .from("release_clearances")
+          .select("release_request_id")
+          .eq("cell", cell)
+          .eq("status", "pending");
+        mine = [...new Set(((pending ?? []) as { release_request_id: string }[]).map((c) => c.release_request_id))];
+      }
+
+      let query = supabase.from("release_overview").select("*");
+      if (q) {
+        query = query.or(
+          ["reference_no", "deposit_reference_no", "instrument_number", "institution_name", "institution_aicte_id"]
+            .map((c) => `${c}.ilike.*${q}*`)
+            .join(","),
+        );
+      }
+      if (awaiting && cell) {
+        query = query.eq("status", "submitted").in("id", mine.length ? mine : ["00000000-0000-0000-0000-000000000000"]);
+      } else if (status in RELEASE_STATUS_LABELS) {
+        query = query.eq("status", status as ReleaseStatus);
+      }
+
+      const { data } = await query.order("created_at", { ascending: false }).limit(10000);
+      const releases = (data ?? []) as ReleaseOverview[];
+
+      // Clearance progress lives in its own table; fetch it for the exported page.
+      const progress = new Map<string, { cleared: number; total: number; blocked: number }>();
+      if (releases.length) {
+        const { data: clearances } = await supabase
+          .from("release_clearances")
+          .select("release_request_id, status")
+          .in("release_request_id", releases.map((r) => r.id));
+        for (const c of (clearances ?? []) as { release_request_id: string; status: string }[]) {
+          const p = progress.get(c.release_request_id) ?? { cleared: 0, total: 0, blocked: 0 };
+          p.total += 1;
+          if (c.status === "cleared") p.cleared += 1;
+          else if (c.status === "blocked") p.blocked += 1;
+          progress.set(c.release_request_id, p);
+        }
+      }
+
+      return {
+        title: REPORTS[key],
+        description: "Release and refund applications matching the current filters, with the clearances recorded on each.",
+        columns: [
+          { key: "reference_no", label: "Request" },
+          { key: "institution", label: "Institution" },
+          { key: "aicte_id", label: "AICTE ID" },
+          { key: "deposit", label: "Deposit" },
+          { key: "amount", label: "Amount (₹)", numeric: true, money: true },
+          { key: "reason", label: "Reason" },
+          { key: "status", label: "Status" },
+          { key: "clearances", label: "Clearances" },
+          { key: "submitted", label: "Submitted" },
+          { key: "decided", label: "Decided" },
+          { key: "noc", label: "NOC reference" },
+        ],
+        rows: releases.map((r) => {
+          const p = progress.get(r.id);
+          return {
+            _href: `/releases/${r.id}`,
+            reference_no: r.reference_no,
+            institution: r.institution_name,
+            aicte_id: r.institution_aicte_id,
+            deposit: r.deposit_reference_no,
+            amount: Number(r.amount),
+            reason: RELEASE_REASON_LABELS[r.reason],
+            status: RELEASE_STATUS_LABELS[r.status],
+            clearances: p ? `${p.cleared}/${p.total}${p.blocked ? " · blocked" : ""}` : "",
+            submitted: r.submitted_at?.slice(0, 10) ?? null,
+            decided: r.decided_at?.slice(0, 10) ?? null,
+            noc: r.noc_reference,
+          };
+        }),
       };
     }
   }

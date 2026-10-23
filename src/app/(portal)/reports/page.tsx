@@ -16,7 +16,12 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const params = await searchParams;
   await requireRole("regional_officer", "aicte_verifier", "admin");
   const requested = param(params.report);
-  const key: ReportKey = requested in REPORTS ? (requested as ReportKey) : "expiring-next-quarter";
+  // The two full registers belong to their list pages; they are reachable here for the CSV only.
+  const CSV_ONLY: ReportKey[] = ["deposits", "releases"];
+  const key: ReportKey =
+    requested in REPORTS && !CSV_ONLY.includes(requested as ReportKey)
+      ? (requested as ReportKey)
+      : "expiring-next-quarter";
   const supabase = await createClient();
   const report = await runReport(supabase, key);
   const totalMoney = report.columns.find((c) => c.money);
@@ -31,7 +36,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
       />
       <div className="no-print mb-5 flex flex-wrap gap-1.5">
         {(Object.entries(REPORTS) as [ReportKey, string][])
-          .filter(([k]) => k !== "deposits")
+          .filter(([k]) => !["deposits", "releases"].includes(k))
           .map(([k, label]) => (
             <Link
               key={k}
