@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { formatDate } from "./format";
 import {
+  DEMAND_STATUS_LABELS,
   INSTRUMENT_SHORT,
   REGION_LABELS,
   RELEASE_REASON_LABELS,
@@ -13,6 +14,7 @@ import { param, searchTerm } from "./query";
 import type {
   DashboardStats,
   DemandOverview,
+  DemandStatus,
   DepositOverview,
   DepositStatus,
   InstrumentType,
@@ -42,6 +44,7 @@ export const REPORTS = {
   kpis: "KPIs & service levels",
   deposits: "Full deposit register",
   releases: "Full release register",
+  demands: "Full demand register",
 } as const;
 export type ReportKey = keyof typeof REPORTS;
 
@@ -390,6 +393,54 @@ export async function runReport(supabase: SupabaseClient, key: ReportKey, params
             noc: r.noc_reference,
           };
         }),
+      };
+    }
+    case "demands": {
+      // Same filters as the Demands list page.
+      const q = searchTerm(params.q);
+      const status = param(params.status);
+      let query = supabase.from("demand_overview").select("*");
+      if (q) {
+        query = query.or(
+          ["reference_no", "approval_case_id", "program", "institution_name", "institution_aicte_id"]
+            .map((c) => `${c}.ilike.*${q}*`)
+            .join(","),
+        );
+      }
+      if (status === "overdue") query = query.eq("is_overdue", true);
+      else if (status in DEMAND_STATUS_LABELS) query = query.eq("status", status as DemandStatus);
+
+      const { data } = await query.order("status").order("due_date").limit(10000);
+      return {
+        title: REPORTS[key],
+        description: "Deposit demands matching the current filters, with what has been furnished against each.",
+        columns: [
+          { key: "reference_no", label: "Demand" },
+          { key: "institution", label: "Institution" },
+          { key: "aicte_id", label: "AICTE ID" },
+          { key: "region", label: "Region" },
+          { key: "approval_case_id", label: "Approval case" },
+          { key: "program", label: "Programme" },
+          { key: "required", label: "Required (₹)", numeric: true, money: true },
+          { key: "deposits_submitted", label: "Deposits furnished", numeric: true },
+          { key: "intimation_date", label: "Intimated" },
+          { key: "due_date", label: "Due date" },
+          { key: "status", label: "Status" },
+        ],
+        rows: ((data ?? []) as DemandOverview[]).map((m) => ({
+          _href: `/demands?q=${encodeURIComponent(m.reference_no)}`,
+          reference_no: m.reference_no,
+          institution: m.institution_name,
+          aicte_id: m.institution_aicte_id,
+          region: REGION_LABELS[m.region],
+          approval_case_id: m.approval_case_id,
+          program: m.program,
+          required: Number(m.required_amount),
+          deposits_submitted: m.deposits_submitted,
+          intimation_date: m.intimation_date,
+          due_date: m.due_date,
+          status: m.is_overdue ? "Overdue" : DEMAND_STATUS_LABELS[m.status],
+        })),
       };
     }
   }

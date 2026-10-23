@@ -1,15 +1,18 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Download } from "lucide-react";
 import { requireUser, isOfficial } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { daysOverdue, formatDate, formatINR } from "@/lib/format";
 import { DEMAND_STATUS_LABELS } from "@/lib/labels";
-import { pageRange, param, searchTerm } from "@/lib/query";
+import { pageRange, param, searchTerm, withParams } from "@/lib/query";
 import type { AphRate, DemandOverview, DemandStatus, Institution } from "@/lib/types";
 import { Card, EmptyState, Field, PageHeader } from "@/components/ui";
 import { DemandStatusBadge } from "@/components/badges";
 import { ActionForm, SubmitButton } from "@/components/action-form";
 import { FilterBar, FilterSelect, Pagination } from "@/components/list-controls";
+import { PrintButton } from "@/components/print-button";
+import { PrintMeta } from "@/components/print-meta";
 import { createDemand, setDemandStatus } from "./actions";
 import { RateFields } from "./rate-fields";
 
@@ -55,14 +58,31 @@ export default async function DemandsPage({ searchParams }: PageProps<"/demands"
   const institutions = (institutionsRes.data ?? []) as Pick<Institution, "id" | "name" | "aicte_id">[];
   const rates = (ratesRes.data ?? []) as AphRate[];
 
+  const statusLabel = status === "overdue" ? "Overdue" : status in DEMAND_STATUS_LABELS ? DEMAND_STATUS_LABELS[status as DemandStatus] : null;
+  const filterSummary = [q && `search “${q}”`, statusLabel && `${statusLabel} only`].filter(Boolean).join(" · ");
+
   return (
     <>
+      <PrintMeta label={`Deposit demands · page ${page}${filterSummary ? ` · ${filterSummary}` : ""}`} />
       <PageHeader
         title="Deposit demands"
         description={
           official
             ? "Security deposits AICTE has asked institutions to furnish for an approval. Overdue demands (no deposit within the submission window) are flagged and alerted automatically."
             : "Security deposits AICTE has asked your institution to furnish."
+        }
+        actions={
+          <>
+            <PrintButton summary={`Deposit demands · page ${page} · ${filterSummary}`} />
+            {official && (
+              <a
+                href={`/api/reports/demands${withParams(params, { page: null })}`}
+                className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 shadow-xs hover:bg-slate-50"
+              >
+                <Download className="size-4" /> Export CSV
+              </a>
+            )}
+          </>
         }
       />
 
