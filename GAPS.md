@@ -14,9 +14,9 @@ This document lists only changes **worth implementing**, ordered by demo/complia
 | ID | Change | Priority | Effort | Spec section |
 |---|---|---|---|---|
 | G1 | Release clearance workflow (Grievance / Vigilance / PGRC) + NOC record | **P0** | 2–3 d | §2.1 workflow, §3C |
-| G2 | Automated refund / penalty calculator | **P0** | 1–1.5 d | §2.3, §8 penalty |
+| G2 | ✅ Automated refund / penalty calculator | **P0** | 1–1.5 d | §2.3, §8 penalty |
 | G3 | Pluggable bank verification adapter (mock-first) | **P0** | 1–2 d | §2.3 bank API, §3A |
-| G4 | KPI instrumentation (turnaround, renewal compliance, flag ageing) | **P0** | 0.5–1 d | §5 KPIs |
+| G4 | ✅ KPI instrumentation (turnaround, renewal compliance, flag ageing) | **P0** | 0.5–1 d | §5 KPIs |
 | G5 | Regression + E2E tests for the above | **P0** | 1–2 d | §5 testing |
 | G6 | APH rate card for demands (Table 1.4) | **P1** | 0.5–1 d | §1 background |
 | G7 | PDF export + print stylesheet | **P1** | 1 d | §2.2 reporting |
@@ -28,7 +28,7 @@ This document lists only changes **worth implementing**, ordered by demo/complia
 | G13 | Retention & archival policy + export job | **P2** | 1–2 d | §4 retention |
 | G14 | SMS channel for alerts | **P2** | 1 d | §2.2 alerts |
 
-**Quick wins (< 0.5 d each):** QW1–QW4 at the end of this document.
+**Quick wins (< 0.5 d each):** QW2–QW4 at the end of this document (QW1 shipped, see §5).
 
 **Explicitly deferred:** OCR/ML, blockchain, chatbot, native mobile app, Aadhaar eSign, payment rails. Rationale in §6.
 
@@ -105,6 +105,8 @@ This document lists only changes **worth implementing**, ordered by demo/complia
 
 **Effort.** 1–1.5 days. **Note.** Confirm the real APH penalty wording before shipping the copy; keep the percentage configurable rather than hard-coded.
 
+**Shipped 2026-10-23.** `20261023130000_release_quote.sql` adds `release_quote(deposit, as_of)` (principal, holding days/years, interest at the deposit rate or the configured default, early-release penalty, shortfall, reasons, net payable, eligible), `app_settings.min_holding_years / early_release_penalty_pct / default_interest_rate`, and `release_requests.quote / sanctioned_amount / sanctioned_by / sanctioned_at`. `decide_release()` freezes the quote on approval, the release page shows an estimate panel (and the frozen sanction once approved), the admin settings page edits the rate card, the **Sanctioned refunds** report exports the stored figures, and `db:verify` covers interest maths, early-release, zero-rate, shortfall, scope and the stored sanction.
+
 ---
 
 ### G3. Pluggable bank verification adapter (mock-first)
@@ -160,6 +162,8 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 - Empty-state renders "—" rather than `NaN`.
 
 **Effort.** 0.5–1 day.
+
+**Shipped 2026-10-23.** `20261023140000_kpi_metrics.sql` extends `dashboard_stats()` with `avg_verification_hours`, `p90_verification_hours` (last 90 days), `renewal_compliance_pct` (renewed ÷ renewed + lapsed), and `open_flag_p50_days` / `open_flag_p90_days`; every value is null on an empty sample. The dashboard shows an officials-only **Service levels** card, and `src/lib/reports.ts` adds an exportable **KPIs & service levels** report. `db:verify` asserts 7.5 h average / 13.6 h p90 turnaround, 66.7% renewal compliance and 6 d / 9.2 d flag ageing on a dedicated scoped region, plus nulls for an institution with no data.
 
 ---
 
@@ -254,7 +258,7 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 
 | ID | Change | Detail |
 |---|---|---|
-| QW1 | Harden profile provisioning at the DB level | The `handle_new_user` trigger cannot see `app_metadata` for admin-created users (GoTrue writes it just after the insert). The app now repairs this in `seed.mjs` and `admin/actions.ts`, but add `after update of raw_app_meta_data on auth.users` → sync profile, and a `db:verify` case. Prevents drift for users created outside the app. |
+| QW1 | ✅ Harden profile provisioning at the DB level | `handle_new_user` cannot see `app_metadata` for admin-created users (GoTrue writes it just after the insert), so the app repaired it by hand in `seed.mjs` and `admin/actions.ts`. `supabase/migrations/20261023120000_profile_app_metadata_sync.sql` adds an `after update of raw_app_meta_data on auth.users` trigger that mirrors role/scope/name into `profiles`, applying only the keys present in `app_metadata` so Supabase's own keys never clobber a portal assignment. `db:verify` covers the late write, the partial update, and the audit row. Shipped 2026-10-23. |
 | QW2 | Turnaround badge in queues | Show `now() - submitted_at` on the verification queue and release list; makes G4 visible immediately. |
 | QW3 | Trigram indexes | `create extension if not exists pg_trgm; create index ... using gin (institution_name gin_trgm_ops)` on the overview source columns backing ILIKE search. |
 | QW4 | Demo-mode docs | Document `NEXT_PUBLIC_DEMO_MODE=true` in `.env.example` so the login page demo hints appear for reviewers. |
@@ -314,7 +318,7 @@ Ship P0 before any judging round; treat P1 as the "completeness" story.
 | §2.1 repository | Built | — |
 | §2.1 workflow | Partial (release) | G1, G10 |
 | §2.1 secure documents | Partial (e-sign) | G12; eSign deferred |
-| §2.1 audit | Built (non-blockchain) | QW1 |
+| §2.1 audit | Built (non-blockchain) | — (QW1 done) |
 | §2.1 RBAC | Partial | G1, G9 |
 | §2.2 dashboard | Built | G4 |
 | §2.2 document mgmt | Partial | G12 |
@@ -328,9 +332,9 @@ Ship P0 before any judging round; treat P1 as the "completeness" story.
 | §2.3 dynamic approvals | Missing | G10 |
 | §2.3 mobile/chatbot | Partial | Deferred |
 | §2.3 eSign | Missing | Deferred |
-| §2.3 refund calculator | Missing | G2 |
+| §2.3 refund calculator | Built (stored sanction) | — (G2 done) |
 | §3 roles | Partial | G1, G9 |
 | §4 security (MFA, retention) | Partial | G11, G13 |
-| §5 KPIs | Partial | G4 |
+| §5 KPIs | Built (90-day turnaround, renewal, flag ageing) | — (G4 done) |
 | §5 testing | Partial | G5 |
 | §6 roadmap Bank/E-Pay | Missing | Deferred |

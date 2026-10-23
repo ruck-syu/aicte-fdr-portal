@@ -87,6 +87,12 @@ export const RELEASE_REASON_LABELS: Record<ReleaseReason, string> = {
   other: "Other",
 };
 
+export const QUOTE_REASON_LABELS: Record<string, string> = {
+  EARLY_RELEASE_BEFORE_MIN_HOLDING: "Released before the minimum holding period",
+  DEPOSIT_BELOW_REQUIRED: "Deposit is below the amount demanded",
+  INSTRUMENT_ALREADY_MATURED: "Instrument has already matured",
+};
+
 export const DEMAND_STATUS_LABELS: Record<DemandStatus, string> = {
   open: "Open",
   fulfilled: "Fulfilled",

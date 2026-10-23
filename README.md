@@ -24,6 +24,8 @@ A central register of the security deposits (FDRs, joint FDRs, bank guarantees a
 
 Access rules are enforced in Postgres with Row Level Security; the UI only mirrors them. Workflow transitions (submit, verify, release…) run through `SECURITY DEFINER` functions that check role and state. Every insert, update and delete is written to an append-only `audit_logs` table by triggers. Sign-ins, document views and report exports are logged there too.
 
+A profile is created for every auth user. Role, institution and region come from `app_metadata` — the one place only the service role can write — and a trigger keeps them in sync when GoTrue writes `app_metadata` after the insert (users created from the Supabase dashboard, for example). Keys absent from `app_metadata` leave the profile untouched, so a portal edit is never clobbered by unrelated Supabase bookkeeping.
+
 ## How it works
 
 - **Demand → deposit.** An officer issues a *deposit demand* (approval case and amount). The institution furnishes one or more instruments against it. A demand with nothing furnished within the submission window is overdue.
@@ -44,7 +46,9 @@ Access rules are enforced in Postgres with Row Level Security; the UI only mirro
   - overdue-demand notices.
 
   Alerts are always shown in-app. They are emailed through Resend if you configure it.
+- **Service levels.** Officials see average and 90th-percentile submission→verification time (last 90 days), renewal compliance (renewed ÷ renewed + lapsed) and the median / p90 age of open discrepancy flags on the dashboard, and can export the same figures from the **KPIs & service levels** report. With no sample yet every measure renders as “—”, not zero.
 - **Release.** The institution applies with the required documents (application letter and affidavit by default). An officer approves (the deposit becomes *Released*) or rejects.
+- **Refund quote.** Every release request shows an indicative refund: principal, simple interest accrued from the issue date (the deposit's own rate, or the configured default), and an early-release penalty when the deposit has not been held for the minimum period. Approving freezes that quote on the request as the sanctioned amount, so the figure is auditable and never recomputed retroactively. The rate card lives under **Admin → Settings**.
 
 ## Deploy (Supabase + Vercel)
 
@@ -52,7 +56,7 @@ Access rules are enforced in Postgres with Row Level Security; the UI only mirro
 
 1. Create a project at [supabase.com](https://supabase.com).
 2. Apply the schema, either:
-   - in **SQL Editor**, by running `supabase/migrations/20261023000000_init.sql`; or
+   - in **SQL Editor**, by running each file in `supabase/migrations/` in filename order; or
    - with the Supabase CLI: `supabase link --project-ref <ref> && supabase db push`.
 
    This creates the tables, RLS policies, functions and the private `deposit-documents` storage bucket.

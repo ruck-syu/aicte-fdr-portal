@@ -218,6 +218,9 @@ export async function saveSettings(_: ActionState, formData: FormData): Promise<
         .max(6),
       escalation_days: z.coerce.number().int().min(0).max(90),
       submission_window_days: z.coerce.number().int().min(1).max(180),
+      min_holding_years: z.coerce.number().int().min(0).max(50),
+      early_release_penalty_pct: z.coerce.number().min(0).max(100),
+      default_interest_rate: z.coerce.number().min(0).max(50),
       required_documents: z.array(z.enum(docTypes)),
       release_required_documents: z.array(z.enum(docTypes)),
     })
@@ -225,6 +228,9 @@ export async function saveSettings(_: ActionState, formData: FormData): Promise<
       alert_days: alertDays,
       escalation_days: formData.get("escalation_days"),
       submission_window_days: formData.get("submission_window_days"),
+      min_holding_years: formData.get("min_holding_years"),
+      early_release_penalty_pct: formData.get("early_release_penalty_pct"),
+      default_interest_rate: formData.get("default_interest_rate"),
       required_documents: formData.getAll("required_documents"),
       release_required_documents: formData.getAll("release_required_documents"),
     });

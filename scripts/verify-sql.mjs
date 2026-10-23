@@ -99,6 +99,28 @@ const sneaky = (await one(`insert into auth.users (email, raw_user_meta_data)
 assert.equal((await one(`select role from profiles where id = $1`, [sneaky])).role, null);
 ok("profiles created from app_metadata; user_metadata role ignored");
 
+// --- profile sync when app_metadata arrives after signup ----------------------
+// GoTrue inserts the auth user and writes app_metadata in separate statements,
+// so the insert trigger often runs before role/scope are known.
+const late = (await one(`insert into auth.users (email) values ('late@x') returning id`)).id;
+assert.equal((await one(`select role from profiles where id = $1`, [late])).role, null);
+await db.query(`update auth.users set raw_app_meta_data = $2 where id = $1`,
+  [late, JSON.stringify({ role: "institute_user", institution_id: instA, full_name: "Late User", designation: "Registrar" })]);
+const lateProfile = await one(`select role, institution_id, region, full_name, designation
+  from profiles where id = $1`, [late]);
+assert.deepEqual(
+  [lateProfile.role, lateProfile.institution_id, lateProfile.region, lateProfile.full_name, lateProfile.designation],
+  ["institute_user", instA, null, "Late User", "Registrar"]);
+
+// a later app_metadata write that omits role/name must not wipe them, and
+// Supabase's own bookkeeping keys must never reach the profile
+await db.query(`update auth.users set raw_app_meta_data = $2 where id = $1`,
+  [late, JSON.stringify({ role: "institute_user", institution_id: instA, provider: "email" })]);
+const kept = await one(`select role, institution_id, full_name from profiles where id = $1`, [late]);
+assert.deepEqual([kept.role, kept.institution_id, kept.full_name], ["institute_user", instA, "Late User"]);
+assert.ok((await q(`select 1 from audit_logs where entity_type = 'profiles' and entity_id = $1`, [late])).length >= 1);
+ok("app_metadata written after signup syncs role + scope; unrelated keys leave the profile intact; audited");
+
 // --- demand by regional officer ---------------------------------------------
 const demand = await as(roNorth, () => one(`insert into deposit_demands
   (institution_id, approval_case_id, program, required_amount, approval_valid_until, intimation_date)
@@ -226,6 +248,58 @@ await as(roNorth, () => q(`select decide_release($1, 'approve', 'NOC issued')`, 
 assert.equal((await one(`select status from deposits where id = $1`, [dep.id])).status, "released");
 ok("release: docs enforced, submitted, approved -> deposit released");
 
+// --- refund / penalty quote (G2) ---------------------------------------------
+const quoteDep = (await as(userA, () => one(`insert into deposits
+  (institution_id, instrument_number, bank_name, amount, interest_rate, issue_date, maturity_date)
+  values ($1, 'FDR-QUOTE', 'Bank of Baroda', 100000, 8, '2020-04-01', '2025-04-01') returning id`,
+  [instA]))).id;
+const quote = (await as(userA, () => one(`select release_quote($1, '2024-04-01'::date) as q`, [quoteDep]))).q;
+assert.equal(quote.holding_days, 1461);
+assert.equal(quote.holding_years, 4);
+assert.equal(quote.accrued_interest, 32021.92); // 100000 @ 8% for 1461 days
+assert.equal(quote.penalty_pct, 10);
+assert.equal(quote.penalty_amount, 10000);
+assert.equal(quote.net_payable, 122021.92);
+assert.equal(quote.eligible, false);
+assert.deepEqual(quote.reasons, ["EARLY_RELEASE_BEFORE_MIN_HOLDING"]);
+
+const later = (await as(userA, () => one(`select release_quote($1, '2031-01-01'::date) as q`, [quoteDep]))).q;
+assert.equal(later.penalty_pct, 0);
+assert.equal(later.net_payable, Number((later.principal + later.accrued_interest).toFixed(2)));
+assert.equal(later.eligible, true);
+assert.ok(later.reasons.includes("INSTRUMENT_ALREADY_MATURED"));
+
+const zeroDep = (await as(userA, () => one(`insert into deposits
+  (institution_id, instrument_number, bank_name, amount, interest_rate, issue_date, maturity_date)
+  values ($1, 'FDR-NOINT', 'Bank of Baroda', 100000, 0, '2020-04-01', '2025-04-01') returning id`,
+  [instA]))).id;
+await db.query(`update deposits set required_amount = 150000 where id = $1`, [zeroDep]);
+const zero = (await as(userA, () => one(`select release_quote($1, '2024-04-01'::date) as q`, [zeroDep]))).q;
+assert.equal(zero.accrued_interest, 0);
+assert.equal(zero.shortfall, 50000);
+assert.ok(zero.reasons.includes("DEPOSIT_BELOW_REQUIRED"));
+
+await as(userB, () => fails(q(`select release_quote($1, '2024-04-01'::date)`, [quoteDep]), /Deposit not found/));
+ok("refund quote: 8% simple interest, 10% early-release penalty, zero-rate and shortfall cases, scoped");
+
+const sanctioned = await one(`select quote, sanctioned_amount, sanctioned_by, sanctioned_at
+  from release_requests where id = $1`, [rr]);
+assert.equal(Number(sanctioned.sanctioned_amount), Number(sanctioned.quote.net_payable));
+assert.equal(sanctioned.sanctioned_by, roNorth);
+assert.ok(sanctioned.sanctioned_at);
+assert.equal(Number(sanctioned.quote.principal), 500000);
+assert.equal(Number(sanctioned.quote.penalty_pct), 10); // issued two days ago
+const sanctionAudit = await one(`select changes from audit_logs
+  where entity_type = 'release_requests' and entity_id = $1 order by id desc limit 1`, [rr]);
+assert.ok(sanctionAudit.changes.sanctioned_amount);
+// the overview view must expose the frozen sanction (it selects r.*)
+const viaView = await as(userA, () => one(`select sanctioned_amount, quote, amount
+  from release_overview where id = $1`, [rr]));
+assert.equal(Number(viaView.sanctioned_amount), Number(sanctioned.quote.net_payable));
+assert.equal(Number(viaView.quote.principal), 500000);
+assert.equal(Number(viaView.amount), 500000);
+ok(`approval freezes the quote: sanctioned ${sanctioned.quote.net_payable} recorded in the audit trail`);
+
 // --- audit + visibility ------------------------------------------------------
 const audit = await as(userA, () => q(`select action, entity_type, summary, actor_email from audit_logs
   where deposit_id = $1 and action = 'status_change' order by id`, [dep.id]));
@@ -243,6 +317,61 @@ assert.equal(stats.s.released_value, 500000);
 const statsB = await as(userB, () => one(`select dashboard_stats() as s`));
 assert.equal(statsB.s.released_value, 0);
 ok("dashboard stats and overview views respect scope");
+
+// --- KPI metrics (G4) --------------------------------------------------------
+// A dedicated region and officer keep the rates isolated from earlier fixtures
+// (dashboard_stats is security invoker, so RLS scopes every sample).
+const instC = (await one(`insert into institutions (aicte_id, name, state, region)
+  values ('1-3000003', 'Gamma Polytechnic', 'Odisha', 'eastern') returning id`)).id;
+const roEast = await user("ro.east@x", { role: "regional_officer", region: "eastern" });
+await db.query(`insert into deposits
+  (institution_id, instrument_number, bank_name, amount, issue_date, maturity_date,
+   status, submitted_at, verified_at)
+  values
+    ($1, 'KPI-2', 'B', 1000, current_date - 500, current_date + 500, 'replaced',
+     now() - interval '60 days', now() - interval '60 days' + interval '2 hours'),
+    ($1, 'KPI-4', 'B', 1000, current_date - 500, current_date + 500, 'replaced',
+     now() - interval '60 days', now() - interval '60 days' + interval '4 hours'),
+    ($1, 'KPI-8', 'B', 1000, current_date - 500, current_date + 500, 'replaced',
+     now() - interval '60 days', now() - interval '60 days' + interval '8 hours'),
+    ($1, 'KPI-16', 'B', 1000, current_date - 500, current_date + 500, 'replaced',
+     now() - interval '60 days', now() - interval '60 days' + interval '16 hours')`, [instC]);
+
+// two renewals and one lapse: compliance = 2 / (2 + 1)
+for (const n of [1, 2]) {
+  const orig = (await one(`insert into deposits
+    (institution_id, instrument_number, bank_name, amount, issue_date, maturity_date, status)
+    values ($1, $2, 'B', 1000, current_date - 100, current_date + 10, 'verified') returning id`,
+    [instC, `ORIG-${n}`])).id;
+  await db.query(`insert into deposits
+    (institution_id, instrument_number, bank_name, amount, issue_date, maturity_date, status, replaces_deposit_id)
+    values ($1, $2, 'B', 1000, current_date, current_date + 1000, 'verified', $3)`,
+    [instC, `RENEW-${n}`, orig]);
+}
+const lapsedDep = (await one(`insert into deposits
+  (institution_id, instrument_number, bank_name, amount, issue_date, maturity_date, status)
+  values ($1, 'LAPSED-1', 'B', 1000, current_date - 1000, current_date - 30, 'verified') returning id`,
+  [instC])).id;
+await db.query(`insert into discrepancies (deposit_id, institution_id, code, severity, message, created_at)
+  values ($1, $2, 'TEST_FLAG', 'warning', 'ageing fixture', now() - interval '2 days'),
+         ($1, $2, 'TEST_FLAG', 'warning', 'ageing fixture', now() - interval '6 days'),
+         ($1, $2, 'TEST_FLAG', 'warning', 'ageing fixture', now() - interval '10 days')`, [lapsedDep, instC]);
+
+const kpi = (await as(roEast, () => one(`select dashboard_stats() as s`))).s;
+assert.equal(kpi.avg_verification_hours, 7.5); // (2 + 4 + 8 + 16) / 4
+assert.equal(kpi.p90_verification_hours, 13.6);
+assert.equal(kpi.renewal_compliance_pct, 66.7);
+assert.equal(kpi.open_flag_p50_days, 6);
+assert.equal(kpi.open_flag_p90_days, 9.2);
+
+const instD = (await one(`insert into institutions (aicte_id, name, state, region)
+  values ('1-4000004', 'Delta Institute', 'Assam', 'eastern') returning id`)).id;
+const userD = await user("d@x", { role: "institute_user", institution_id: instD });
+const emptyKpi = (await as(userD, () => one(`select dashboard_stats() as s`))).s;
+assert.equal(emptyKpi.avg_verification_hours, null);
+assert.equal(emptyKpi.renewal_compliance_pct, null);
+assert.equal(emptyKpi.open_flag_p50_days, null);
+ok("KPI metrics: 7.5h average / 13.6h p90 verification, 66.7% renewal compliance, 6d / 9.2d flag ageing, null when empty");
 
 // storage policies
 await as(userA, () => q(`insert into storage.objects (bucket_id, name, owner_id) values ('deposit-documents', $1, $2)`, [`${instA}/x/y.pdf`, userA]));
