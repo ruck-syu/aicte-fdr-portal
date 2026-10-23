@@ -273,7 +273,18 @@ export async function runReport(supabase: SupabaseClient, key: ReportKey, params
       if (validity in VALIDITY_LABELS) query = query.eq("validity", validity as Validity);
       if (region in REGION_LABELS) query = query.eq("region", region as Region);
       if (instrument in INSTRUMENT_SHORT) query = query.eq("instrument_type", instrument as InstrumentType);
-      const { data } = await query.order("institution_name").order("maturity_date").limit(10000);
+      // Follow the list page's column sort so the CSV matches what was on screen.
+      const sort = param(params.sort);
+      const dir = param(params.dir);
+      const fields: Record<string, string> = {
+        reference: "reference_no",
+        institution: "institution_name",
+        amount: "amount",
+        issue: "issue_date",
+        maturity: "maturity_date",
+      };
+      const ascending = dir === "asc" || dir === "desc" ? dir === "asc" : ["reference", "institution", "issue", "maturity"].includes(sort);
+      const { data } = await query.order(fields[sort] ?? "updated_at", { ascending }).limit(10000);
       return {
         title: REPORTS[key],
         description: "Every deposit in your jurisdiction matching the current filters.",

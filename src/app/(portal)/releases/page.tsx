@@ -10,6 +10,8 @@ import type { ReleaseOverview, ReleaseStatus } from "@/lib/types";
 import { Card, EmptyState, LinkButton, PageHeader } from "@/components/ui";
 import { AgeBadge, ReleaseStatusBadge } from "@/components/badges";
 import { FilterBar, FilterSelect, Pagination } from "@/components/list-controls";
+import { PrintButton } from "@/components/print-button";
+import { PrintMeta } from "@/components/print-meta";
 
 export const metadata: Metadata = { title: "Release requests" };
 
@@ -73,8 +75,18 @@ export default async function ReleasesPage({ searchParams }: PageProps<"/release
     }
   }
 
+  const statusLabel = status in RELEASE_STATUS_LABELS ? RELEASE_STATUS_LABELS[status as ReleaseStatus] : null;
+  const filterSummary = [
+    q && `search “${q}”`,
+    awaitingMine && "my cell's queue",
+    statusLabel && `${statusLabel} only`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
     <>
+      <PrintMeta label={`Release requests · page ${page}${filterSummary ? ` · ${filterSummary}` : ""}`} />
       <PageHeader
         title="Release requests"
         description={
@@ -83,14 +95,17 @@ export default async function ReleasesPage({ searchParams }: PageProps<"/release
             : "Requests to release your deposits. Start one from a verified deposit’s page."
         }
         actions={
-          official && (
-            <a
-              href={`/api/reports/releases${withParams(params, { page: null })}`}
-              className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 shadow-xs hover:bg-slate-50"
-            >
-              <Download className="size-4" /> Export CSV
-            </a>
-          )
+          <>
+            <PrintButton summary={`Release requests · page ${page} · ${filterSummary}`} />
+            {official && (
+              <a
+                href={`/api/reports/releases${withParams(params, { page: null })}`}
+                className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 shadow-xs hover:bg-slate-50"
+              >
+                <Download className="size-4" /> Export CSV
+              </a>
+            )}
+          </>
         }
       />
       {user.role === "release_officer" && cell && (

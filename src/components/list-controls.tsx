@@ -85,7 +85,7 @@ export function Pagination({
       <span className="num">
         {from}–{to} of {total}
       </span>
-      <div className="flex gap-1.5">
+      <div className="no-print flex gap-1.5">
         {page > 1 ? (
           <Link className={buttonClass("secondary", "sm")} href={`${basePath}${withParams(params, { page: page - 1 })}`}>
             Previous
