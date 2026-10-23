@@ -28,6 +28,8 @@ import { BankCheckBadge, ReleaseStatusBadge, SeverityBadge, StatusBadge, Validit
 import { ActionForm, SubmitButton } from "@/components/action-form";
 import { DocumentUploader } from "@/components/document-uploader";
 import { CommentThread } from "@/components/comment-thread";
+import { PrintButton } from "@/components/print-button";
+import { PrintMeta } from "@/components/print-meta";
 import {
   deleteDeposit,
   requestRelease,
@@ -136,6 +138,7 @@ export default async function DepositPage({ params, searchParams }: PageProps<"/
 
   return (
     <>
+      <PrintMeta label={`Deposit ${d.reference_no}`} />
       <PageHeader
         eyebrow={
           <Link href="/deposits" className="hover:underline">
@@ -157,6 +160,7 @@ export default async function DepositPage({ params, searchParams }: PageProps<"/
         }
         actions={
           <>
+            <PrintButton summary={`Deposit ${d.reference_no} · ${d.institution_name}`} />
             {editable && (
               <LinkButton href={`/deposits/${d.id}/edit`} variant="secondary">
                 <Pencil className="size-4" /> Edit details

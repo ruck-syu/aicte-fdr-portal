@@ -19,7 +19,7 @@ This document lists only changes **worth implementing**, ordered by demo/complia
 | G4 | ✅ KPI instrumentation (turnaround, renewal compliance, flag ageing) | **P0** | 0.5–1 d | §5 KPIs |
 | G5 | Regression + E2E tests for the above | **P0** | 1–2 d | §5 testing |
 | G6 | ✅ APH rate card for demands (Table 1.4) | **P1** | 0.5–1 d | §1 background |
-| G7 | PDF export + print stylesheet | **P1** | 1 d | §2.2 reporting |
+| G7 | ✅ PDF export + print stylesheet | **P1** | 1 d | §2.2 reporting |
 | G8 | Region heatmap (region × status) | **P1** | 0.5–1 d | §2.2 analytics |
 | G9 | Read-only Auditor role | **P1** | 0.5 d | §3 roles |
 | G10 | Amount-threshold second approval for releases | **P1** | 1 d | §2.3 dynamic approvals |
@@ -209,6 +209,8 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 
 **Acceptance.** A4 output shows title, filters, generated-at, page numbers; audit row recorded. **Effort.** 1 day.
 
+**Shipped 2026-10-23.** `globals.css` adds a `@media print` block (`size: A4`, sidebar/pills/actions and all forms removed, repeating table headers, no shadows) plus a `.print-only` header. `PrintButton` + `logPrintExport()` add **Print / Save as PDF** to `/reports` and the deposit and release pages, writing the export to the audit trail as `report.export` (`PDF · …`) before opening the browser dialog. No PDF dependency: the browser's own engine produces the file, and the report's existing totals row prints with the table. Page numbers are the browser's header/footer setting, not a CSS feature.
+
 ### G8. Region heatmap
 
 **Why.** Spec asks for a heatmap of deposit status by region (§2.2). The dashboard shows a plain table plus a bar chart.
@@ -330,7 +332,7 @@ Ship P0 before any judging round; treat P1 as the "completeness" story.
 | §2.2 document mgmt | Partial | G12 |
 | §2.2 search/filter | Built (ILIKE) | QW3 |
 | §2.2 alerts | Partial (no SMS, no request ageing) | G14, G4 |
-| §2.2 reporting | Partial (CSV only) | G7, G8 |
+| §2.2 reporting | Built (CSV + print/PDF) | G8 |
 | §2.3 bank API | Built (mock adapter + evidence) | — (G3 done) |
 | §2.3 OCR/ML | Missing | Deferred |
 | §2.3 blockchain | Missing | Deferred (hash anchor option) |

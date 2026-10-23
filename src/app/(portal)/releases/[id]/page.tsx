@@ -27,6 +27,8 @@ import { ClearanceStatusBadge, ReleaseStatusBadge } from "@/components/badges";
 import { ActionForm, SubmitButton } from "@/components/action-form";
 import { DocumentUploader } from "@/components/document-uploader";
 import { CommentThread } from "@/components/comment-thread";
+import { PrintButton } from "@/components/print-button";
+import { PrintMeta } from "@/components/print-meta";
 import { decideRelease, recordClearance, submitRelease, withdrawRelease } from "../actions";
 import { deleteDocument } from "../../documents/actions";
 
@@ -105,6 +107,7 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
 
   return (
     <>
+      <PrintMeta label={`Release ${r.reference_no}`} />
       <PageHeader
         eyebrow={
           <Link href="/releases" className="hover:underline">
@@ -126,20 +129,23 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
           </>
         }
         actions={
-          isOwner && (r.status === "draft" || r.status === "submitted") ? (
-            <>
-              {r.status === "draft" && (
-                <ActionForm action={submitRelease} hideOk>
+          <>
+            <PrintButton summary={`Release ${r.reference_no} · ${r.institution_name}`} />
+            {isOwner && (r.status === "draft" || r.status === "submitted") ? (
+              <>
+                {r.status === "draft" && (
+                  <ActionForm action={submitRelease} hideOk>
+                    <input type="hidden" name="id" value={r.id} />
+                    <SubmitButton>Submit for approval</SubmitButton>
+                  </ActionForm>
+                )}
+                <ActionForm action={withdrawRelease} confirm="Withdraw this release request?" hideOk>
                   <input type="hidden" name="id" value={r.id} />
-                  <SubmitButton>Submit for approval</SubmitButton>
+                  <SubmitButton variant="secondary">Withdraw</SubmitButton>
                 </ActionForm>
-              )}
-              <ActionForm action={withdrawRelease} confirm="Withdraw this release request?" hideOk>
-                <input type="hidden" name="id" value={r.id} />
-                <SubmitButton variant="secondary">Withdraw</SubmitButton>
-              </ActionForm>
-            </>
-          ) : null
+              </>
+            ) : null}
+          </>
         }
       />
 

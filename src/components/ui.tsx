@@ -50,7 +50,8 @@ export function PageHeader({
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{title}</h1>
         {description && <p className="mt-1 max-w-3xl text-sm text-slate-600">{description}</p>}
       </div>
-      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+      {/* Controls are screen-only; printed records show content, not actions. */}
+      {actions && <div className="no-print flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
   );
 }
