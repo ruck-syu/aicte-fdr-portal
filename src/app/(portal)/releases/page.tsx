@@ -3,10 +3,10 @@ import Link from "next/link";
 import { requireUser, isOfficial } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { formatDate, formatINR } from "@/lib/format";
-import { RELEASE_REASON_LABELS, RELEASE_STATUS_LABELS } from "@/lib/labels";
-import { pageRange, param, searchTerm } from "@/lib/query";
+import { CLEARANCE_CELL_LABELS, RELEASE_REASON_LABELS, RELEASE_STATUS_LABELS } from "@/lib/labels";
+import { pageRange, param, searchTerm, withParams } from "@/lib/query";
 import type { ReleaseOverview, ReleaseStatus } from "@/lib/types";
-import { Card, EmptyState, PageHeader } from "@/components/ui";
+import { Card, EmptyState, LinkButton, PageHeader } from "@/components/ui";
 import { AgeBadge, ReleaseStatusBadge } from "@/components/badges";
 import { FilterBar, FilterSelect, Pagination } from "@/components/list-controls";
 
@@ -22,6 +22,19 @@ export default async function ReleasesPage({ searchParams }: PageProps<"/release
   const status = param(params.status);
   const { page, from, to } = pageRange(params.page);
 
+  // A clearance officer can jump straight to the releases waiting on their cell.
+  const cell = user.role === "release_officer" ? user.clearance_cell : null;
+  const awaitingMine = param(params.awaiting) === "me" && !!cell;
+  let mine: string[] = [];
+  if (awaitingMine && cell) {
+    const { data: pending } = await supabase
+      .from("release_clearances")
+      .select("release_request_id")
+      .eq("cell", cell)
+      .eq("status", "pending");
+    mine = [...new Set(((pending ?? []) as { release_request_id: string }[]).map((c) => c.release_request_id))];
+  }
+
   let query = supabase.from("release_overview").select("*", { count: "exact" });
   if (q) {
     query = query.or(
@@ -30,12 +43,34 @@ export default async function ReleasesPage({ searchParams }: PageProps<"/release
         .join(","),
     );
   }
-  if (status in RELEASE_STATUS_LABELS) query = query.eq("status", status as ReleaseStatus);
+  if (awaitingMine) {
+    // The cell queue is always "under review"; an empty set must still match nothing.
+    query = query.eq("status", "submitted").in("id", mine.length ? mine : ["00000000-0000-0000-0000-000000000000"]);
+  } else if (status in RELEASE_STATUS_LABELS) {
+    query = query.eq("status", status as ReleaseStatus);
+  }
   const { data, count } = await query
     .order("submitted_at", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: false })
     .range(from, to);
   const rows = (data ?? []) as ReleaseOverview[];
+
+  // Clearance progress for the rows on this page. Institutions read statuses on
+  // the detail page; the table only holds official-readable rows.
+  const progress = new Map<string, { cleared: number; blocked: number; total: number }>();
+  if (official && rows.length) {
+    const { data: clearances } = await supabase
+      .from("release_clearances")
+      .select("release_request_id, status")
+      .in("release_request_id", rows.map((r) => r.id));
+    for (const c of (clearances ?? []) as { release_request_id: string; status: string }[]) {
+      const p = progress.get(c.release_request_id) ?? { cleared: 0, blocked: 0, total: 0 };
+      p.total += 1;
+      if (c.status === "cleared") p.cleared += 1;
+      else if (c.status === "blocked") p.blocked += 1;
+      progress.set(c.release_request_id, p);
+    }
+  }
 
   return (
     <>
@@ -47,6 +82,22 @@ export default async function ReleasesPage({ searchParams }: PageProps<"/release
             : "Requests to release your deposits. Start one from a verified deposit’s page."
         }
       />
+      {user.role === "release_officer" && cell && (
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <LinkButton
+            href={`/releases${withParams(params, { awaiting: awaitingMine ? null : "me", status: null, page: null })}`}
+            variant={awaitingMine ? "primary" : "secondary"}
+            size="sm"
+          >
+            {awaitingMine ? "Show all releases" : "Only my cell's queue"}
+          </LinkButton>
+          <span className="text-xs text-slate-500">
+            {awaitingMine
+              ? `${CLEARANCE_CELL_LABELS[cell]} clearances awaiting your sign-off`
+              : "Releases waiting on Grievance, Vigilance or PGRC sign-off."}
+          </span>
+        </div>
+      )}
       <FilterBar action="/releases" q={q} placeholder="Reference, deposit, instrument, institution…" resetHref="/releases">
         <FilterSelect
           name="status"
@@ -97,6 +148,21 @@ export default async function ReleasesPage({ searchParams }: PageProps<"/release
                     </td>
                     <td>
                       <ReleaseStatusBadge status={r.status} />
+                      {(() => {
+                        const p = progress.get(r.id);
+                        if (!p?.total) return null;
+                        const tone = p.blocked
+                          ? "text-red-700"
+                          : p.cleared === p.total
+                            ? "text-emerald-700"
+                            : "text-slate-500";
+                        return (
+                          <div className={`mt-1 text-xs ${tone}`}>
+                            Clearances {p.cleared}/{p.total}
+                            {p.blocked ? " · blocked" : ""}
+                          </div>
+                        );
+                      })()}
                     </td>
                   </tr>
                 ))}
