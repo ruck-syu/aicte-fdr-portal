@@ -1,6 +1,8 @@
 import type {
   AppRole,
   BankCheck,
+  ClearanceCell,
+  ClearanceStatus,
   DemandStatus,
   DepositStatus,
   DocumentType,
@@ -15,7 +17,26 @@ export const ROLE_LABELS: Record<AppRole, string> = {
   institute_user: "Institute Accounts Officer",
   regional_officer: "Regional Officer",
   aicte_verifier: "AICTE Verifier",
+  release_officer: "Release Clearance Officer",
   admin: "Administrator",
+};
+
+export const CLEARANCE_CELL_LABELS: Record<ClearanceCell, string> = {
+  grievance: "Grievance",
+  vigilance: "Vigilance",
+  pgrc: "PGRC",
+};
+
+export const CLEARANCE_CELL_DESCRIPTIONS: Record<ClearanceCell, string> = {
+  grievance: "Grievance redressal cell",
+  vigilance: "Vigilance cell",
+  pgrc: "Programme Review & Closure Committee",
+};
+
+export const CLEARANCE_STATUS_LABELS: Record<ClearanceStatus, string> = {
+  pending: "Pending",
+  cleared: "Cleared",
+  blocked: "Blocked",
 };
 
 export const REGION_LABELS: Record<Region, string> = {

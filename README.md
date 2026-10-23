@@ -20,6 +20,7 @@ A central register of the security deposits (FDRs, joint FDRs, bank guarantees a
 | Institute Accounts Officer | Own institution | Register deposits and renewals, upload documents, respond to discrepancies, request release |
 | Regional Officer | Own region | Issue demands, verify / return / reject deposits, record bank confirmation, decide releases, reports |
 | AICTE Verifier | All regions | Same as Regional Officer, nationally |
+| Release Clearance Officer | One clearance cell (Grievance / Vigilance / PGRC) | Sign off or block releases for their cell; read access across institutions |
 | Administrator | Everything | Users, institutions (incl. CSV import), alert and document rules |
 
 Access rules are enforced in Postgres with Row Level Security; the UI only mirrors them. Workflow transitions (submit, verify, release…) run through `SECURITY DEFINER` functions that check role and state. Every insert, update and delete is written to an append-only `audit_logs` table by triggers. Sign-ins, document views and report exports are logged there too.
@@ -28,7 +29,7 @@ A profile is created for every auth user. Role, institution and region come from
 
 ## How it works
 
-- **Demand → deposit.** An officer issues a *deposit demand* (approval case and amount). The institution furnishes one or more instruments against it. A demand with nothing furnished within the submission window is overdue.
+- **Demand → deposit.** An officer issues a *deposit demand* (approval case and amount), picking the programme from the **APH rate card** (Table 1.4) where it is listed: the card fills the amount and shows its source and effective date. A different amount — APH exceptions such as government colleges — needs a recorded reason, which lands in the audit trail. The institution furnishes one or more instruments against it. A demand with nothing furnished within the submission window is overdue.
 - **Discrepancy detection.**
   - On submission, `deposit_checks()` validates the deposit. It checks:
     - mandatory documents;
@@ -47,7 +48,7 @@ A profile is created for every auth user. Role, institution and region come from
 
   Alerts are always shown in-app. They are emailed through Resend if you configure it.
 - **Service levels.** Officials see average and 90th-percentile submission→verification time (last 90 days), renewal compliance (renewed ÷ renewed + lapsed) and the median / p90 age of open discrepancy flags on the dashboard, and can export the same figures from the **KPIs & service levels** report. With no sample yet every measure renders as “—”, not zero.
-- **Release.** The institution applies with the required documents (application letter and affidavit by default). An officer approves (the deposit becomes *Released*) or rejects.
+- **Release.** The institution applies with the required documents (application letter and affidavit by default). A submitted request then needs three clearances — Grievance, Vigilance and PGRC. Each is signed (cleared / blocked, with a note) by an officer of that cell; a block stops approval and only an administrator can override it, with a recorded reason. Once every cell has cleared, a reviewer approves with the NOC reference, the deposit becomes *Released* and the reference is stored on the request. Institutions see the cell statuses but not the cells' internal notes.
 - **Refund quote.** Every release request shows an indicative refund: principal, simple interest accrued from the issue date (the deposit's own rate, or the configured default), and an early-release penalty when the deposit has not been held for the minimum period. Approving freezes that quote on the request as the sanctioned amount, so the figure is auditable and never recomputed retroactively. The rate card lives under **Admin → Settings**.
 
 ## Deploy (Supabase + Vercel)
@@ -88,6 +89,8 @@ npm install
 npm run seed
 ```
 
+The migrations seed the APH rate card with the Engineering & Technology rows quoted in the proposal (Diploma ₹15L, UG ₹35L, PG ₹15L, APH 2024-27 Table 1.4). Add the remaining programmes from the current APH edition as dated rows in `aph_deposit_rates` — a new edition is a new row, never an edit, so issued demands keep their figures.
+
 This creates the following, all with the password `Demo@12345`:
 
 - six institutions across regions;
@@ -101,6 +104,9 @@ This creates the following, all with the password `Demo@12345`:
 | verifier@demo.fdr | AICTE Verifier |
 | ro.northern@demo.fdr | Regional Officer (Northern) |
 | ro.western@demo.fdr | Regional Officer (Western) |
+| grievance@demo.fdr | Release Clearance Officer — Grievance |
+| vigilance@demo.fdr | Release Clearance Officer — Vigilance |
+| pgrc@demo.fdr | Release Clearance Officer — PGRC |
 | accounts@alpha.demo.fdr | Institute: Alpha Institute of Technology |
 | accounts@beta.demo.fdr | Institute: Beta College of Engineering |
 | accounts@gamma.demo.fdr | Institute: Gamma Polytechnic |

@@ -5,12 +5,13 @@ import { createClient } from "@/lib/supabase/server";
 import { formatDate, formatINR } from "@/lib/format";
 import { DEMAND_STATUS_LABELS } from "@/lib/labels";
 import { pageRange, param, searchTerm } from "@/lib/query";
-import type { DemandOverview, DemandStatus, Institution } from "@/lib/types";
+import type { AphRate, DemandOverview, DemandStatus, Institution } from "@/lib/types";
 import { Card, EmptyState, Field, PageHeader } from "@/components/ui";
 import { DemandStatusBadge } from "@/components/badges";
 import { ActionForm, SubmitButton } from "@/components/action-form";
 import { FilterBar, FilterSelect, Pagination } from "@/components/list-controls";
 import { createDemand, setDemandStatus } from "./actions";
+import { RateFields } from "./rate-fields";
 
 export const metadata: Metadata = { title: "Deposit demands" };
 
@@ -35,15 +36,24 @@ export default async function DemandsPage({ searchParams }: PageProps<"/demands"
   if (status === "overdue") query = query.eq("is_overdue", true);
   else if (status in DEMAND_STATUS_LABELS) query = query.eq("status", status as DemandStatus);
 
-  const [{ data, count }, institutionsRes] = await Promise.all([
+  const today = new Date().toISOString().slice(0, 10);
+  const [{ data, count }, institutionsRes, ratesRes] = await Promise.all([
     query.order("status").order("due_date").range(from, to),
     official
       ? supabase.from("institutions").select("id, name, aicte_id").order("name").limit(1000)
       : Promise.resolve({ data: [] }),
+    official
+      ? supabase
+          .from("aph_deposit_rates")
+          .select("id, program_key, level, program_label, amount, effective_from, effective_to, source_note")
+          .lte("effective_from", today)
+          .or(`effective_to.is.null,effective_to.gte.${today}`)
+          .order("program_label")
+      : Promise.resolve({ data: [] }),
   ]);
   const rows = (data ?? []) as DemandOverview[];
   const institutions = (institutionsRes.data ?? []) as Pick<Institution, "id" | "name" | "aicte_id">[];
-  const today = new Date().toISOString().slice(0, 10);
+  const rates = (ratesRes.data ?? []) as AphRate[];
 
   return (
     <>
@@ -78,12 +88,7 @@ export default async function DemandsPage({ searchParams }: PageProps<"/demands"
               <Field label="Approval case / LOA reference" required htmlFor="approval_case_id">
                 <input id="approval_case_id" name="approval_case_id" required className="input" placeholder="e.g. F.No. Northern/1-123456789/2026/EOA" />
               </Field>
-              <Field label="Programme / course" htmlFor="program">
-                <input id="program" name="program" className="input" />
-              </Field>
-              <Field label="Required amount (₹)" required htmlFor="required_amount">
-                <input id="required_amount" name="required_amount" required inputMode="decimal" className="input num" />
-              </Field>
+              <RateFields rates={rates} />
               <Field label="Approval valid until" htmlFor="approval_valid_until" hint="Deposit must not mature before this date">
                 <input id="approval_valid_until" name="approval_valid_until" type="date" className="input" />
               </Field>

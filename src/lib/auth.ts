@@ -37,5 +37,12 @@ export async function requireRole(...roles: AppRole[]) {
 }
 
 export function isOfficial(role: AppRole | null | undefined) {
-  return role === "regional_officer" || role === "aicte_verifier" || role === "admin";
+  return (
+    role === "regional_officer" || role === "aicte_verifier" || role === "release_officer" || role === "admin"
+  );
+}
+
+/** Rows a release clearance officer may sign for. Administrators may sign any. */
+export function canSignClearance(user: { role: AppRole; clearance_cell?: string | null }, cell: string) {
+  return user.role === "admin" || (user.role === "release_officer" && user.clearance_cell === cell);
 }

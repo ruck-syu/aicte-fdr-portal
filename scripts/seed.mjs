@@ -76,6 +76,9 @@ const users = [
   { email: "accounts@alpha.demo.fdr", role: "institute_user", institution_id: inst[1].id, full_name: "Arun Kumar", designation: "Accounts Officer" },
   { email: "accounts@beta.demo.fdr", role: "institute_user", institution_id: inst[2].id, full_name: "Bina Sharma", designation: "Accounts Officer" },
   { email: "accounts@gamma.demo.fdr", role: "institute_user", institution_id: inst[3].id, full_name: "Ganesh Patil", designation: "Finance Officer" },
+  { email: "grievance@demo.fdr", role: "release_officer", clearance_cell: "grievance", full_name: "Gita Menon", designation: "Officer, Grievance Cell" },
+  { email: "vigilance@demo.fdr", role: "release_officer", clearance_cell: "vigilance", full_name: "Vivek Rathi", designation: "Officer, Vigilance Cell" },
+  { email: "pgrc@demo.fdr", role: "release_officer", clearance_cell: "pgrc", full_name: "Priya Nair", designation: "Member Secretary, PGRC" },
 ];
 const existing = new Map();
 for (let page = 1; ; page++) {
@@ -239,9 +242,27 @@ const rr = must(
   "release request",
 );
 await attach(b3, ["release_letter", "affidavit", "clearance_certificate"], { release: rr.id });
-must(
-  await db.from("release_requests").insert({ deposit_id: b4.id, institution_id: inst[2].id, reason: "term_completion", status: "approved", submitted_at: ts(-500), decided_at: ts(-480), decided_by: verifier, decision_note: "All approvals closed; release authorised.", requested_by: uid["accounts@beta.demo.fdr"] }),
+const approvedRr = must(
+  await db
+    .from("release_requests")
+    .insert({ deposit_id: b4.id, institution_id: inst[2].id, reason: "term_completion", status: "approved", submitted_at: ts(-500), decided_at: ts(-480), decided_by: verifier, decision_note: "All approvals closed; release authorised.", requested_by: uid["accounts@beta.demo.fdr"], noc_reference: "NOC/AICTE/2026/014" })
+    .select("id")
+    .single(),
   "release approved",
+);
+
+// Clearances: the approved release cleared all three cells; the submitted one
+// is held up by Vigilance so the demo shows the gate doing its job.
+must(
+  await db.from("release_clearances").insert([
+    { release_request_id: approvedRr.id, institution_id: inst[2].id, cell: "grievance", status: "cleared", decided_by: uid["grievance@demo.fdr"], decided_at: ts(-490), note: "No grievance pending." },
+    { release_request_id: approvedRr.id, institution_id: inst[2].id, cell: "vigilance", status: "cleared", decided_by: uid["vigilance@demo.fdr"], decided_at: ts(-488), note: "No vigilance case against the institution." },
+    { release_request_id: approvedRr.id, institution_id: inst[2].id, cell: "pgrc", status: "cleared", decided_by: uid["pgrc@demo.fdr"], decided_at: ts(-485), note: "Programme closure verified." },
+    { release_request_id: rr.id, institution_id: inst[2].id, cell: "grievance", status: "cleared", decided_by: uid["grievance@demo.fdr"], decided_at: ts(-2), note: "No grievance pending." },
+    { release_request_id: rr.id, institution_id: inst[2].id, cell: "vigilance", status: "blocked", decided_by: uid["vigilance@demo.fdr"], decided_at: ts(-2), note: "Pending vigilance clearance on the 2024 procurement case." },
+    { release_request_id: rr.id, institution_id: inst[2].id, cell: "pgrc", status: "pending" },
+  ]),
+  "release clearances",
 );
 
 // Gamma (Western), Delta, Epsilon, Zeta: spread across regions and maturities.

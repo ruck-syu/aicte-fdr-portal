@@ -92,6 +92,9 @@ const admin = await user("admin@x", { role: "admin", full_name: "Admin" });
 const verifier = await user("verifier@x", { role: "aicte_verifier" });
 const roNorth = await user("ro.north@x", { role: "regional_officer", region: "northern" });
 const roSouthWest = await user("ro.sw@x", { role: "regional_officer", region: "south_western" });
+const grievance = await user("grievance@x", { role: "release_officer", clearance_cell: "grievance" });
+const vigilance = await user("vigilance@x", { role: "release_officer", clearance_cell: "vigilance" });
+const pgrc = await user("pgrc@x", { role: "release_officer", clearance_cell: "pgrc" });
 const userA = await user("a@x", { role: "institute_user", institution_id: instA });
 const userB = await user("b@x", { role: "institute_user", institution_id: instB });
 const sneaky = (await one(`insert into auth.users (email, raw_user_meta_data)
@@ -234,6 +237,33 @@ await as(verifier, () => q(`select review_deposit($1, 'verify')`, [renewal.id]))
 assert.equal((await one(`select status from deposits where id = $1`, [soon.id])).status, "replaced");
 ok("renewal verified -> original deposit marked replaced");
 
+// --- APH rate card (G6) ------------------------------------------------------
+const rates = await as(roNorth, () => q(`select id, program_key, amount from aph_deposit_rates order by program_key`));
+assert.equal(rates.length, 3);
+assert.equal(Number(rates.find((r) => r.program_key === "engineering_ug").amount), 3500000);
+assert.equal((await as(userA, () => q(`select id from aph_deposit_rates`))).length, 0);
+
+const ugRate = rates.find((r) => r.program_key === "engineering_ug").id;
+const rateDemand = (amount, note) => as(roNorth, () => one(`insert into deposit_demands
+  (institution_id, approval_case_id, program, required_amount, intimation_date, aph_rate_id, override_note)
+  values ($1, $2, 'Engineering & Technology — Undergraduate', $3, current_date, $4, $5)
+  returning id, required_amount, override_note`, [instA, `APH-TEST-${amount}`, amount, ugRate, note]));
+
+await fails(rateDemand(900000, null), /override note/);
+const priced = await rateDemand(3500000, null);
+assert.equal(Number(priced.required_amount), 3500000);
+const overridden = await rateDemand(900000, "Government college concession");
+assert.equal(overridden.override_note, "Government college concession");
+const overrideAudit = await one(`select summary from audit_logs
+  where entity_type = 'deposit_demands' and entity_id = $1 order by id desc limit 1`, [overridden.id]);
+assert.match(overrideAudit.summary, /APH override: Government college concession/);
+// without a card row the amount stays free-form (APH exceptions, unlisted programmes)
+const free = await as(roNorth, () => one(`insert into deposit_demands
+  (institution_id, approval_case_id, program, required_amount, intimation_date)
+  values ($1, 'FREE-TEXT', 'Management', 500000, current_date) returning id`, [instA]));
+assert.ok(free.id);
+ok("APH rate card: officials read it, the card amount passes, a different amount needs a reason and is audited");
+
 // --- release -----------------------------------------------------------------
 const rr = (await as(userA, () => one(`select create_release_request($1, 'course_closure', 'Programme closed in 2026') as id`, [dep.id]))).id;
 await as(userA, () => fails(q(`select submit_release_request($1)`, [rr]), /release letter, affidavit/));
@@ -243,10 +273,70 @@ for (const t of ["release_letter", "affidavit"]) {
 }
 await as(userA, () => q(`select submit_release_request($1)`, [rr]));
 assert.equal((await one(`select status from deposits where id = $1`, [dep.id])).status, "release_requested");
+
+// --- clearance workflow (G1) -------------------------------------------------
+const cells = Object.fromEntries((await q(`select cell, status from release_clearances
+  where release_request_id = $1`, [rr])).map((r) => [r.cell, r.status]));
+assert.deepEqual(cells, { grievance: "pending", vigilance: "pending", pgrc: "pending" });
+
 await as(roNorth, () => fails(q(`select decide_release($1, 'reject')`, [rr]), /note/));
-await as(roNorth, () => q(`select decide_release($1, 'approve', 'NOC issued')`, [rr]));
+await as(roNorth, () => fails(q(`select decide_release($1, 'approve', null, 'NOC/AICTE/2026/001')`, [rr]), /0 of 3 decided/));
+
+await as(userA, () => fails(q(`select record_clearance($1, 'grievance', 'cleared')`, [rr]), /clearance cell officer/));
+await as(grievance, () => fails(q(`select record_clearance($1, 'vigilance', 'cleared')`, [rr]), /only sign off grievance/));
+// a block needs a reason
+await as(grievance, () => fails(q(`select record_clearance($1, 'grievance', 'blocked')`, [rr]), /note/));
+await as(grievance, () => q(`select record_clearance($1, 'grievance', 'blocked', 'Vigilance enquiry pending')`, [rr]));
+// a blocked cell stops approval; only an administrator may override, with a note, and never without a NOC
+await as(roNorth, () => fails(q(`select decide_release($1, 'approve', null, 'NOC/AICTE/2026/001')`, [rr]), /blocked/));
+await as(admin, () => fails(q(`select decide_release($1, 'approve', null, 'NOC/AICTE/2026/001')`, [rr]), /must record a note/));
+// a cell officer is not a reviewer and cannot decide the release
+await as(grievance, () => fails(q(`select decide_release($1, 'approve', 'x', 'NOC/1')`, [rr]), /not found/));
+
+// the institution sees the checklist statuses through the summary function, not
+// the table (which carries the cells' internal notes)
+assert.equal((await as(userA, () => q(`select id from release_clearances`))).length, 0);
+const summary = await as(userA, () => q(`select cell, status from release_clearance_summary($1)`, [rr]));
+assert.deepEqual(summary.map((r) => r.status), ["blocked", "pending", "pending"]);
+assert.equal((await as(userB, () => q(`select cell from release_clearance_summary($1)`, [rr]))).length, 0);
+await as(userA, () => fails(q(`select ensure_release_clearances($1)`, [rr]), /permission denied/));
+await as(userA, () => fails(q(`insert into release_clearances (release_request_id, institution_id, cell)
+  values ($1, $2, 'pgrc')`, [rr, instA]), /permission denied/));
+
+await as(grievance, () => q(`select record_clearance($1, 'grievance', 'cleared', 'Enquiry closed; no dues')`, [rr]));
+await as(vigilance, () => q(`select record_clearance($1, 'vigilance', 'cleared')`, [rr]));
+await as(pgrc, () => q(`select record_clearance($1, 'pgrc', 'cleared', 'Programme closure verified')`, [rr]));
+await as(roNorth, () => fails(q(`select decide_release($1, 'approve', 'NOC issued')`, [rr]), /NOC reference/));
+await as(roNorth, () => q(`select decide_release($1, 'approve', 'NOC issued', 'NOC/AICTE/2026/001')`, [rr]));
 assert.equal((await one(`select status from deposits where id = $1`, [dep.id])).status, "released");
-ok("release: docs enforced, submitted, approved -> deposit released");
+const noc = await one(`select status, noc_reference from release_requests where id = $1`, [rr]);
+assert.deepEqual([noc.status, noc.noc_reference], ["approved", "NOC/AICTE/2026/001"]);
+const blockAudit = await one(`select summary, actor_email from audit_logs
+  where entity_type = 'release_clearances'
+    and entity_id = (select id from release_clearances where release_request_id = $1 and cell = 'grievance')
+  order by id desc limit 1`, [rr]);
+assert.match(blockAudit.summary, /Enquiry closed; no dues/);
+assert.equal(blockAudit.actor_email, "grievance@x");
+ok("release clearances: three pending cells, cell-scoped sign-off, block gate, NOC required, status-only view for institutions, notes audited");
+
+// administrator override: every cell decided, one blocked, override needs a note
+const ovDep = (await one(`insert into deposits
+  (institution_id, instrument_number, bank_name, amount, issue_date, maturity_date, status, verified_at)
+  values ($1, 'FDR-OVERRIDE', 'Indian Bank', 300000, current_date - 400, current_date + 600, 'verified', now())
+  returning id`, [instA])).id;
+const ovRr = (await as(userA, () => one(`select create_release_request($1, 'institution_closure', 'Closing the institute') as id`, [ovDep]))).id;
+for (const t of ["release_letter", "affidavit"]) {
+  await as(userA, () => q(`insert into deposit_documents (release_request_id, doc_type, storage_path, file_name, institution_id)
+    values ($1, $2, $3, 'f.pdf', $4)`, [ovRr, t, `${instA}/releases/${ovRr}/${t}.pdf`, instA]));
+}
+await as(userA, () => q(`select submit_release_request($1)`, [ovRr]));
+await as(grievance, () => q(`select record_clearance($1, 'grievance', 'blocked', 'Pending enquiry')`, [ovRr]));
+await as(vigilance, () => q(`select record_clearance($1, 'vigilance', 'cleared')`, [ovRr]));
+await as(pgrc, () => q(`select record_clearance($1, 'pgrc', 'cleared')`, [ovRr]));
+await as(admin, () => q(`select decide_release($1, 'approve', 'Board approved release despite the enquiry', 'NOC/AICTE/2026/002')`, [ovRr]));
+assert.equal((await one(`select status, noc_reference, decided_by from release_requests where id = $1`, [ovRr])).noc_reference, "NOC/AICTE/2026/002");
+assert.equal((await one(`select status from deposits where id = $1`, [ovDep])).status, "released");
+ok("clearance override: administrator approval of a blocked cell recorded with a note + NOC");
 
 // --- refund / penalty quote (G2) ---------------------------------------------
 const quoteDep = (await as(userA, () => one(`insert into deposits
@@ -355,7 +445,7 @@ const roSwView = await as(roSouthWest, () => q(`select id from deposit_overview`
 assert.equal(roSwView.length, 0);
 const stats = await as(verifier, () => one(`select dashboard_stats() as s`));
 assert.equal(stats.s.held_count, 1);
-assert.equal(stats.s.released_value, 500000);
+assert.equal(stats.s.released_value, 800000); // main release + administrator override
 const statsB = await as(userB, () => one(`select dashboard_stats() as s`));
 assert.equal(statsB.s.released_value, 0);
 ok("dashboard stats and overview views respect scope");
@@ -431,6 +521,11 @@ await as(admin, () => fails(q(`select admin_update_profile($1, 'institute_user',
 await as(admin, () => q(`select admin_update_profile($1, 'regional_officer', null, 'eastern', 'Bee', 'RO', true)`, [userB]));
 const changed = await one(`select role, region, institution_id from profiles where id = $1`, [userB]);
 assert.deepEqual([changed.role, changed.region, changed.institution_id], ["regional_officer", "eastern", null]);
+// a clearance officer must belong to a cell
+await as(admin, () => fails(q(`select admin_update_profile($1, 'release_officer', null, null, 'x', null, true)`, [userB]), /profile_scope/));
+await as(admin, () => q(`select admin_update_profile($1, 'release_officer', null, null, 'Bee', 'Cell officer', true, 'vigilance')`, [userB]));
+const cell = await one(`select role, region, institution_id, clearance_cell from profiles where id = $1`, [userB]);
+assert.deepEqual([cell.role, cell.region, cell.institution_id, cell.clearance_cell], ["release_officer", null, null, "vigilance"]);
 assert.equal((await one(`select actor_id from audit_logs where entity_type = 'profiles' and entity_id = $1 order by id desc limit 1`, [userB])).actor_id, admin);
 ok("admin profile changes validated and attributed in audit log");
 

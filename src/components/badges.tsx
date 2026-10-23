@@ -1,12 +1,20 @@
 import { Badge, type Tone } from "./ui";
 import {
   BANK_CHECK_LABELS,
+  CLEARANCE_STATUS_LABELS,
   DEMAND_STATUS_LABELS,
   RELEASE_STATUS_LABELS,
   STATUS_LABELS,
   VALIDITY_LABELS,
 } from "@/lib/labels";
-import type { BankCheck, DemandStatus, DepositStatus, ReleaseStatus, Validity } from "@/lib/types";
+import type {
+  BankCheck,
+  ClearanceStatus,
+  DemandStatus,
+  DepositStatus,
+  ReleaseStatus,
+  Validity,
+} from "@/lib/types";
 
 const STATUS_TONES: Record<DepositStatus, Tone> = {
   draft: "slate",
@@ -39,6 +47,11 @@ export function ReleaseStatusBadge({ status }: { status: ReleaseStatus }) {
     status
   ] as Tone;
   return <Badge tone={tone}>{RELEASE_STATUS_LABELS[status]}</Badge>;
+}
+
+export function ClearanceStatusBadge({ status }: { status: ClearanceStatus }) {
+  const tone: Tone = { pending: "amber", cleared: "green", blocked: "red" }[status] as Tone;
+  return <Badge tone={tone}>{CLEARANCE_STATUS_LABELS[status]}</Badge>;
 }
 
 export function DemandStatusBadge({ status, overdue }: { status: DemandStatus; overdue?: boolean }) {

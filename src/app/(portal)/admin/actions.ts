@@ -6,26 +6,31 @@ import { requireRole } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { friendlyError } from "@/lib/errors";
-import { DOCUMENT_LABELS, REGION_LABELS, ROLE_LABELS } from "@/lib/labels";
-import type { ActionState, AppRole, DocumentType, Region } from "@/lib/types";
+import { CLEARANCE_CELL_LABELS, DOCUMENT_LABELS, REGION_LABELS, ROLE_LABELS } from "@/lib/labels";
+import type { ActionState, AppRole, ClearanceCell, DocumentType, Region } from "@/lib/types";
 
 const blankToNull = (v: unknown) => (typeof v === "string" && v.trim() === "" ? null : v);
 const roles = Object.keys(ROLE_LABELS) as [AppRole, ...AppRole[]];
 const regions = Object.keys(REGION_LABELS) as [Region, ...Region[]];
 const docTypes = Object.keys(DOCUMENT_LABELS) as [DocumentType, ...DocumentType[]];
+const clearanceCells = Object.keys(CLEARANCE_CELL_LABELS) as [ClearanceCell, ...ClearanceCell[]];
 
 const scopeSchema = z
   .object({
     role: z.enum(roles, { message: "Choose a role" }),
     institution_id: z.preprocess(blankToNull, z.string().uuid().nullable()),
     region: z.preprocess(blankToNull, z.enum(regions).nullable()),
+    clearance_cell: z.preprocess(blankToNull, z.enum(clearanceCells).nullable()),
     full_name: z.preprocess(blankToNull, z.string().trim().max(120).nullable()),
     designation: z.preprocess(blankToNull, z.string().trim().max(120).nullable()),
   })
   .refine((v) => v.role !== "institute_user" || v.institution_id, {
     message: "Institute users must be linked to an institution",
   })
-  .refine((v) => v.role !== "regional_officer" || v.region, { message: "Regional officers need a region" });
+  .refine((v) => v.role !== "regional_officer" || v.region, { message: "Regional officers need a region" })
+  .refine((v) => v.role !== "release_officer" || v.clearance_cell, {
+    message: "Release clearance officers must be assigned to a cell",
+  });
 
 // ---------------------------------------------------------------- users
 
@@ -51,6 +56,7 @@ export async function createUser(_: ActionState, formData: FormData): Promise<Ac
       role: s.role,
       institution_id: s.role === "institute_user" ? s.institution_id : null,
       region: s.role === "regional_officer" ? s.region : null,
+      clearance_cell: s.role === "release_officer" ? s.clearance_cell : null,
       full_name: s.full_name,
       designation: s.designation,
     },
@@ -69,6 +75,7 @@ export async function createUser(_: ActionState, formData: FormData): Promise<Ac
     p_full_name: s.full_name ?? "",
     p_designation: s.designation ?? "",
     p_active: true,
+    p_clearance_cell: s.clearance_cell,
   });
   if (profileError) {
     return { error: `Account created, but assigning the role failed: ${friendlyError(profileError)}` };
@@ -96,6 +103,7 @@ export async function updateUser(_: ActionState, formData: FormData): Promise<Ac
     p_full_name: s.full_name ?? "",
     p_designation: s.designation ?? "",
     p_active: raw.is_active === "on",
+    p_clearance_cell: s.clearance_cell,
   });
   if (error) return { error: friendlyError(error) };
   refresh();

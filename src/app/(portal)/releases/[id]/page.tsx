@@ -2,22 +2,45 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { FileText, History } from "lucide-react";
-import { requireUser, isOfficial } from "@/lib/auth";
+import { requireUser, isOfficial, canSignClearance } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { displayName, formatBytes, formatDate, formatDateTime, formatINR } from "@/lib/format";
-import { DOCUMENT_LABELS, QUOTE_REASON_LABELS, RELEASE_REASON_LABELS } from "@/lib/labels";
-import type { AppSettings, Comment, DepositDocument, DocumentType, ReleaseOverview, ReleaseQuote } from "@/lib/types";
+import {
+  CLEARANCE_CELL_DESCRIPTIONS,
+  CLEARANCE_CELL_LABELS,
+  DOCUMENT_LABELS,
+  QUOTE_REASON_LABELS,
+  RELEASE_REASON_LABELS,
+} from "@/lib/labels";
+import type {
+  AppSettings,
+  ClearanceCell,
+  ClearanceStatus,
+  Comment,
+  DepositDocument,
+  DocumentType,
+  ReleaseOverview,
+  ReleaseQuote,
+} from "@/lib/types";
 import { Alert, Badge, Card, DescriptionList, EmptyState, PageHeader } from "@/components/ui";
-import { ReleaseStatusBadge } from "@/components/badges";
+import { ClearanceStatusBadge, ReleaseStatusBadge } from "@/components/badges";
 import { ActionForm, SubmitButton } from "@/components/action-form";
 import { DocumentUploader } from "@/components/document-uploader";
 import { CommentThread } from "@/components/comment-thread";
-import { decideRelease, submitRelease, withdrawRelease } from "../actions";
+import { decideRelease, recordClearance, submitRelease, withdrawRelease } from "../actions";
 import { deleteDocument } from "../../documents/actions";
 
 export const metadata: Metadata = { title: "Release request" };
 
 type DocRow = DepositDocument & { uploader: { full_name: string | null; email: string } | null };
+/** Officials get the full row; institutions get the note-free summary. */
+type ClearanceRow = {
+  cell: ClearanceCell;
+  status: ClearanceStatus;
+  note?: string | null;
+  decided_at?: string | null;
+  officer?: { full_name: string | null; email: string } | null;
+};
 
 export default async function ReleasePage({ params }: PageProps<"/releases/[id]">) {
   const { id } = await params;
@@ -29,7 +52,7 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
   if (!data) notFound();
   const r = data as ReleaseOverview;
 
-  const [docsRes, commentsRes, settingsRes, peopleRes, quoteRes] = await Promise.all([
+  const [docsRes, commentsRes, settingsRes, peopleRes, quoteRes, clearancesRes] = await Promise.all([
     supabase
       .from("deposit_documents")
       .select("*, uploader:profiles!deposit_documents_uploaded_by_fkey(full_name, email)")
@@ -47,6 +70,12 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
       .select("id, full_name, email")
       .in("id", [r.requested_by, r.decided_by].filter(Boolean) as string[]),
     supabase.rpc("release_quote", { p_deposit: r.deposit_id }),
+    official
+      ? supabase
+          .from("release_clearances")
+          .select("*, officer:profiles!release_clearances_decided_by_fkey(full_name, email)")
+          .eq("release_request_id", id)
+      : supabase.rpc("release_clearance_summary", { p_release: id }),
   ]);
   const liveQuote = (quoteRes.data ?? null) as ReleaseQuote | null;
   // An approved release keeps the quote frozen at approval; never recompute it.
@@ -56,6 +85,15 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
   const comments = (commentsRes.data ?? []) as Comment[];
   const settings = settingsRes.data as AppSettings | null;
   const people = new Map((peopleRes.data ?? []).map((p) => [p.id, p]));
+  const clearanceByCell = new Map(
+    ((clearancesRes.data ?? []) as ClearanceRow[]).map((c) => [c.cell, c]),
+  );
+  const cells: ClearanceCell[] = ["grievance", "vigilance", "pgrc"];
+  const clearedCount = cells.filter((c) => clearanceByCell.get(c)?.status === "cleared").length;
+  const allDecided = cells.every((c) => (clearanceByCell.get(c)?.status ?? "pending") !== "pending");
+  // An administrator may override a block (with a note), never a missing sign-off.
+  const canApprove = clearedCount === cells.length || (user.role === "admin" && allDecided);
+  const awaiting = cells.filter((c) => clearanceByCell.get(c)?.status !== "cleared");
 
   const isOwner = user.role === "institute_user" && user.institution_id === r.institution_id;
   const required = settings?.release_required_documents ?? (["release_letter", "affidavit"] as DocumentType[]);
@@ -116,7 +154,8 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
         <div className="mb-4">
           <Alert tone="green" title="Release approved">
             Approved {formatDateTime(r.decided_at)} by {displayName(people.get(r.decided_by ?? ""))}. The deposit is
-            recorded as released{r.sanctioned_amount !== null ? ` and ${formatINR(r.sanctioned_amount)} sanctioned` : ""}.
+            recorded as released{r.sanctioned_amount !== null ? ` and ${formatINR(r.sanctioned_amount)} sanctioned` : ""}
+            {r.noc_reference ? ` under NOC ${r.noc_reference}` : ""}.
           </Alert>
         </div>
       )}
@@ -144,10 +183,67 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
                   ? [
                       { label: "Decided", value: `${formatDateTime(r.decided_at)} by ${displayName(people.get(r.decided_by ?? ""))}` },
                       { label: "Decision note", value: r.decision_note, wide: true },
+                      ...(r.noc_reference ? [{ label: "NOC reference", value: r.noc_reference }] : []),
                     ]
                   : []),
               ]}
             />
+          </Card>
+
+          <Card
+            title="Clearances"
+            description="Grievance, Vigilance and PGRC each sign off before a release can be approved."
+          >
+            <ul className="space-y-3">
+              {cells.map((cell) => {
+                const c = clearanceByCell.get(cell);
+                const status = c?.status ?? "pending";
+                const signable = r.status === "submitted" && canSignClearance(user, cell);
+                return (
+                  <li key={cell} className="rounded-md border border-slate-200 px-3.5 py-3">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <div className="text-sm font-medium text-slate-900">{CLEARANCE_CELL_LABELS[cell]}</div>
+                        <div className="text-xs text-slate-500">{CLEARANCE_CELL_DESCRIPTIONS[cell]}</div>
+                      </div>
+                      <ClearanceStatusBadge status={status} />
+                    </div>
+                    {c?.decided_at && (
+                      <p className="mt-1 text-xs text-slate-500">
+                        {official && c.officer ? `${displayName(c.officer)} · ` : ""}
+                        {formatDateTime(c.decided_at)}
+                      </p>
+                    )}
+                    {official && c?.note && <p className="mt-1 text-xs text-slate-600">{c.note}</p>}
+                    {signable && (
+                      <ActionForm action={recordClearance} className="mt-3 space-y-2">
+                        <input type="hidden" name="id" value={r.id} />
+                        <input type="hidden" name="cell" value={cell} />
+                        <input
+                          name="note"
+                          className="input"
+                          placeholder={status === "blocked" ? "Reason for the block (required)" : "Note (optional)"}
+                        />
+                        <div className="flex flex-wrap gap-2">
+                          <SubmitButton
+                            size="sm"
+                            name="status"
+                            value="cleared"
+                            variant="success"
+                            confirm={`Record ${CLEARANCE_CELL_LABELS[cell]} clearance?`}
+                          >
+                            {status === "blocked" ? "Clear block" : "Clear"}
+                          </SubmitButton>
+                          <SubmitButton size="sm" name="status" value="blocked" variant="danger">
+                            Block
+                          </SubmitButton>
+                        </div>
+                      </ActionForm>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           </Card>
 
           <Card
@@ -276,21 +372,42 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
                       {docs.some((x) => x.is_current && x.doc_type === t) ? "✓" : "✗"} {DOCUMENT_LABELS[t]}
                     </li>
                   ))}
+                  <li className={clearedCount === 3 ? "" : "text-slate-500"}>
+                    {clearedCount === 3 ? "✓" : "✗"} Clearances ({clearedCount}/3)
+                  </li>
                 </ul>
-                <textarea name="note" rows={3} className="input" placeholder="Decision note (required to reject)" />
-                <div className="flex gap-2">
-                  <SubmitButton
-                    name="decision"
-                    value="approve"
-                    variant="success"
-                    confirm="Approve release? The deposit will be marked as released."
-                  >
-                    Approve release
-                  </SubmitButton>
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">NOC reference</span>
+                  <input name="noc_reference" className="input" placeholder="e.g. NOC/AICTE/2026/001" />
+                  <span className="mt-1 block text-xs text-slate-500">Required to approve; stored on the release.</span>
+                </label>
+                <textarea
+                  name="note"
+                  rows={3}
+                  className="input"
+                  placeholder="Decision note (required to reject, or for an administrator override)"
+                />
+                <div className="flex flex-wrap gap-2">
+                  {canApprove && (
+                    <SubmitButton
+                      name="decision"
+                      value="approve"
+                      variant="success"
+                      confirm="Approve release? The deposit will be marked as released."
+                    >
+                      Approve release
+                    </SubmitButton>
+                  )}
                   <SubmitButton name="decision" value="reject" variant="danger">
                     Reject
                   </SubmitButton>
                 </div>
+                {!canApprove && (
+                  <p className="text-xs text-amber-700">
+                    Awaiting {awaiting.map((c) => CLEARANCE_CELL_LABELS[c]).join(", ")}. Approval unlocks once every cell has
+                    cleared.
+                  </p>
+                )}
               </ActionForm>
             </Card>
           )}
@@ -300,6 +417,7 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
                 ["Draft prepared", true],
                 ["Documents uploaded", missing.length === 0],
                 ["Submitted for approval", !!r.submitted_at],
+                [`Clearances (${clearedCount}/3)`, clearedCount === 3],
                 [
                   r.status === "rejected" ? "Rejected" : r.status === "withdrawn" ? "Withdrawn" : "Approved & released",
                   ["approved", "rejected", "withdrawn"].includes(r.status),
