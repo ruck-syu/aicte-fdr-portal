@@ -12,8 +12,17 @@ import { AgeBadge, ReleaseStatusBadge } from "@/components/badges";
 import { FilterBar, FilterSelect, Pagination } from "@/components/list-controls";
 import { PrintButton } from "@/components/print-button";
 import { PrintMeta } from "@/components/print-meta";
+import { SortLink } from "@/components/sort-link";
 
 export const metadata: Metadata = { title: "Release requests" };
+
+const SORT_FIELDS = {
+  reference: "reference_no",
+  amount: "amount",
+  submitted: "submitted_at",
+} as const;
+type SortKey = keyof typeof SORT_FIELDS;
+const ASC_BY_DEFAULT: SortKey[] = ["reference", "submitted"];
 
 export default async function ReleasesPage({ searchParams }: PageProps<"/releases">) {
   const params = await searchParams;
@@ -23,6 +32,19 @@ export default async function ReleasesPage({ searchParams }: PageProps<"/release
 
   const q = searchTerm(params.q);
   const status = param(params.status);
+  const requestedSort = param(params.sort);
+  const sort: SortKey = requestedSort in SORT_FIELDS ? (requestedSort as SortKey) : "submitted";
+  const requestedDir = param(params.dir);
+  const dir: "asc" | "desc" =
+    requestedDir === "asc" || requestedDir === "desc"
+      ? requestedDir
+      : ASC_BY_DEFAULT.includes(sort)
+        ? "asc"
+        : "desc";
+  const sortHref = (key: SortKey) => {
+    const nextDir = sort === key ? (dir === "asc" ? "desc" : "asc") : ASC_BY_DEFAULT.includes(key) ? "asc" : "desc";
+    return `/releases${withParams(params, { sort: key, dir: nextDir, page: null })}`;
+  };
   const { page, from, to } = pageRange(params.page);
 
   // A clearance officer can jump straight to the releases waiting on their cell.
@@ -53,7 +75,7 @@ export default async function ReleasesPage({ searchParams }: PageProps<"/release
     query = query.eq("status", status as ReleaseStatus);
   }
   const { data, count } = await query
-    .order("submitted_at", { ascending: true, nullsFirst: false })
+    .order(SORT_FIELDS[sort], { ascending: dir === "asc", nullsFirst: false })
     .order("created_at", { ascending: false })
     .range(from, to);
   const rows = (data ?? []) as ReleaseOverview[];
@@ -140,12 +162,32 @@ export default async function ReleasesPage({ searchParams }: PageProps<"/release
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Request</th>
+                  <th aria-sort={sort === "reference" ? (dir === "asc" ? "ascending" : "descending") : "none"}>
+                    <SortLink label="Request" href={sortHref("reference")} active={sort === "reference"} dir={dir} />
+                  </th>
                   {official && <th>Institution</th>}
                   <th>Deposit</th>
-                  <th className="text-right">Amount</th>
+                  <th
+                    className="text-right"
+                    aria-sort={sort === "amount" ? (dir === "asc" ? "ascending" : "descending") : "none"}
+                  >
+                    <SortLink
+                      label="Amount"
+                      href={sortHref("amount")}
+                      active={sort === "amount"}
+                      dir={dir}
+                      align="right"
+                    />
+                  </th>
                   <th>Reason</th>
-                  <th>Submitted</th>
+                  <th aria-sort={sort === "submitted" ? (dir === "asc" ? "ascending" : "descending") : "none"}>
+                    <SortLink
+                      label="Submitted"
+                      href={sortHref("submitted")}
+                      active={sort === "submitted"}
+                      dir={dir}
+                    />
+                  </th>
                   <th>Status</th>
                 </tr>
               </thead>

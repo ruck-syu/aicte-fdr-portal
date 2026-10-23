@@ -341,7 +341,12 @@ export async function runReport(supabase: SupabaseClient, key: ReportKey, params
         query = query.eq("status", status as ReleaseStatus);
       }
 
-      const { data } = await query.order("created_at", { ascending: false }).limit(10000);
+      // Follow the list page's column sort.
+      const sort = param(params.sort);
+      const dir = param(params.dir);
+      const fields: Record<string, string> = { reference: "reference_no", amount: "amount", submitted: "submitted_at" };
+      const ascending = dir === "asc" || dir === "desc" ? dir === "asc" : ["reference", "submitted"].includes(sort);
+      const { data } = await query.order(fields[sort] ?? "created_at", { ascending }).limit(10000);
       const releases = (data ?? []) as ReleaseOverview[];
 
       // Clearance progress lives in its own table; fetch it for the exported page.

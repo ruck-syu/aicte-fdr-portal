@@ -68,23 +68,36 @@ export default async function DepositsPage({ searchParams }: PageProps<"/deposit
     return `/deposits${withParams(params, { sort: key, dir: nextDir, page: null })}`;
   };
 
-  let query = supabase.from("deposit_overview").select("*", { count: "exact" });
-  if (q) {
-    query = query.or(
-      ["reference_no", "instrument_number", "bank_name", "institution_name", "institution_aicte_id", "approval_case_id"]
-        .map((c) => `${c}.ilike.*${q}*`)
-        .join(","),
-    );
-  }
-  if (status === "held") query = query.in("status", ["verified", "release_requested"]);
-  else if (status in STATUS_LABELS) query = query.eq("status", status as DepositStatus);
-  if (validity in VALIDITY_LABELS) query = query.eq("validity", validity as Validity);
-  if (region in REGION_LABELS) query = query.eq("region", region as Region);
-  if (instrument in INSTRUMENT_LABELS) query = query.eq("instrument_type", instrument as InstrumentType);
-  query = query.order(sort === "updated" ? "updated_at" : SORT_FIELDS[sort], { ascending: dir === "asc" });
+  // Built twice: once for the page, once to total the money across the same filter.
+  const filtered = () => {
+    let query = supabase.from("deposit_overview").select("*", { count: "exact" });
+    if (q) {
+      query = query.or(
+        ["reference_no", "instrument_number", "bank_name", "institution_name", "institution_aicte_id", "approval_case_id"]
+          .map((c) => `${c}.ilike.*${q}*`)
+          .join(","),
+      );
+    }
+    if (status === "held") query = query.in("status", ["verified", "release_requested"]);
+    else if (status in STATUS_LABELS) query = query.eq("status", status as DepositStatus);
+    if (validity in VALIDITY_LABELS) query = query.eq("validity", validity as Validity);
+    if (region in REGION_LABELS) query = query.eq("region", region as Region);
+    if (instrument in INSTRUMENT_LABELS) query = query.eq("instrument_type", instrument as InstrumentType);
+    return query;
+  };
 
-  const { data, count, error } = await query.range(from, to);
+  const [{ data, count, error }, { data: amountRows }] = await Promise.all([
+    filtered()
+      .order(sort === "updated" ? "updated_at" : SORT_FIELDS[sort], { ascending: dir === "asc" })
+      .range(from, to),
+    // PostgREST caps a response at 1,000 rows; beyond that the total is a lower bound.
+    filtered().select("amount").limit(1000),
+  ]);
   const rows = (data ?? []) as DepositOverview[];
+
+  const amounts = (amountRows ?? []) as { amount: number }[];
+  const filteredTotal = amounts.reduce((sum, r) => sum + Number(r.amount), 0);
+  const totalCapped = (count ?? 0) > amounts.length;
 
   const statusLabel = STATUS_OPTIONS.find(([v]) => v === status)?.[1];
   const validityLabel = validity in VALIDITY_LABELS ? VALIDITY_LABELS[validity as Validity] : null;
@@ -159,9 +172,22 @@ export default async function DepositsPage({ searchParams }: PageProps<"/deposit
           />
         )}
       </FilterBar>
-      <p className="no-print mb-2 text-xs text-slate-500">
-        Sorted by {SORT_LABELS[sort]}. Use a column heading to re-order; the order carries into the CSV export.
-      </p>
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-xs text-slate-500">
+        <span className="no-print">
+          Sorted by {SORT_LABELS[sort]}. Use a column heading to re-order; the order carries into the CSV export.
+        </span>
+        {!error && (
+          <span>
+            <span className="num text-slate-700">{(count ?? 0).toLocaleString("en-IN")}</span> deposit
+            {(count ?? 0) === 1 ? "" : "s"} match · total{" "}
+            <span className="num font-medium text-slate-800">
+              {totalCapped ? "≥ " : ""}
+              {formatINR(filteredTotal)}
+            </span>
+            {totalCapped ? " (first 1,000)" : ""}
+          </span>
+        )}
+      </div>
 
       <Card bodyClassName="p-0">
         {error ? (
