@@ -125,7 +125,7 @@ npm run dev                  # http://localhost:3000
 ## Integration hooks
 
 - **Reports / CSV.** `GET /api/reports/<report>` returns any report as CSV. Reports: `expiring-next-quarter`, `missing-deposits`, `lapsed`, `flagged`, `pending-releases` and `deposits` (the last accepts the Deposits list filters as query parameters). It needs a signed-in official and is audited.
-- **Bank confirmation.** `set_bank_check(deposit, status, ref)` is the single entry point for recording a bank's response. A future bank API or e-mail parser can call it with a service account.
+- **Bank confirmation.** `set_bank_check(deposit, status, ref)` records a manual response. Reviewers can also press **Verify with bank** on a deposit under review: `src/lib/bank/` picks a provider from `BANK_VERIFIER` — `mock` by default (offline, deterministic: numbers ending in 0/5 mismatch, containing `ERR` are unavailable), or `http` which POSTs to `BANK_VERIFIER_URL`. `record_bank_verification()` applies the verdict, stores the raw request and response in the audited `bank_verifications` table, raises at most one open `BANK_MISMATCH` flag and resolves it on a later confirmation. If the provider is down, the manual form stays available as the fallback.
 - **AICTE approval systems.** Institutions upsert on `aicte_id` (CSV import, or `institutions` via the API with the service key). Demands carry the `approval_case_id`, ready for a feed from the approval process.
 
 ## Project layout

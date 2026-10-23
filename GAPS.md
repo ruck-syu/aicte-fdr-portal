@@ -15,7 +15,7 @@ This document lists only changes **worth implementing**, ordered by demo/complia
 |---|---|---|---|---|
 | G1 | Release clearance workflow (Grievance / Vigilance / PGRC) + NOC record | **P0** | 2–3 d | §2.1 workflow, §3C |
 | G2 | ✅ Automated refund / penalty calculator | **P0** | 1–1.5 d | §2.3, §8 penalty |
-| G3 | Pluggable bank verification adapter (mock-first) | **P0** | 1–2 d | §2.3 bank API, §3A |
+| G3 | ✅ Pluggable bank verification adapter (mock-first) | **P0** | 1–2 d | §2.3 bank API, §3A |
 | G4 | ✅ KPI instrumentation (turnaround, renewal compliance, flag ageing) | **P0** | 0.5–1 d | §5 KPIs |
 | G5 | Regression + E2E tests for the above | **P0** | 1–2 d | §5 testing |
 | G6 | APH rate card for demands (Table 1.4) | **P1** | 0.5–1 d | §1 background |
@@ -136,6 +136,8 @@ This document lists only changes **worth implementing**, ordered by demo/complia
 - `db:verify` asserts the mismatch path.
 
 **Effort.** 1–2 days for mock; +3–5 days for a real bank/FI integration (out of scope now).
+
+**Shipped 2026-10-23.** `20261023150000_bank_verifications.sql` adds the audited `bank_verifications` evidence table and `record_bank_verification()`, which is reviewer-only, applies `confirmed` / `mismatch` / `unavailable` atomically, dedupes the open `BANK_MISMATCH` flag and resolves it on a later confirmation. `src/lib/bank/` provides the provider interface, a deterministic offline mock and an HTTP adapter selected by `BANK_VERIFIER` (default `mock`); the deposit page has a **Verify with bank** action beside the manual fallback. `db:verify` covers the mismatch dedupe, confirmation clearing the flag, unavailable leaving the status alone, RLS scoping, direct-insert denial and the audit trail.
 
 ---
 
@@ -325,7 +327,7 @@ Ship P0 before any judging round; treat P1 as the "completeness" story.
 | §2.2 search/filter | Built (ILIKE) | QW3 |
 | §2.2 alerts | Partial (no SMS, no request ageing) | G14, G4 |
 | §2.2 reporting | Partial (CSV only) | G7, G8 |
-| §2.3 bank API | Missing | G3 |
+| §2.3 bank API | Built (mock adapter + evidence) | — (G3 done) |
 | §2.3 OCR/ML | Missing | Deferred |
 | §2.3 blockchain | Missing | Deferred (hash anchor option) |
 | §2.3 smart escalation | Partial | G4 (ageing) |

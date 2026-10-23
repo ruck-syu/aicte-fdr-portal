@@ -300,6 +300,48 @@ assert.equal(Number(viaView.quote.principal), 500000);
 assert.equal(Number(viaView.amount), 500000);
 ok(`approval freezes the quote: sanctioned ${sanctioned.quote.net_payable} recorded in the audit trail`);
 
+// --- bank verification adapter (G3) ------------------------------------------
+const bankDep = (await as(userA, () => one(`insert into deposits
+  (institution_id, instrument_number, bank_name, ifsc, amount, issue_date, maturity_date)
+  values ($1, 'FDR-BANK-7788', 'Union Bank of India', 'ubin0001234', 250000,
+          current_date - 10, current_date + 800) returning id`, [instA]))).id;
+for (const t of ["fdr_scan", "affidavit", "loa"]) {
+  await as(userA, () => q(`insert into deposit_documents (deposit_id, doc_type, storage_path, file_name, institution_id)
+    values ($1, $2, $3, 'f.pdf', $4)`, [bankDep, t, `${instA}/${bankDep}/${t}.pdf`, instA]));
+}
+await as(userA, () => q(`select submit_deposit($1)`, [bankDep]));
+
+await as(userA, () => fails(q(`select record_bank_verification($1, 'mock', 'mismatch', null, '{}'::jsonb, '{}'::jsonb)`, [bankDep]), /Deposit not found/));
+// two mismatch verdicts in a row must not duplicate the open flag
+for (let i = 0; i < 2; i++) {
+  await as(roNorth, () => q(`select record_bank_verification($1, 'mock', 'mismatch', null,
+    '{"instrumentNumber":"FDR-BANK-7788"}'::jsonb, '{"status":"mismatch"}'::jsonb)`, [bankDep]));
+}
+assert.equal((await one(`select bank_check from deposits where id = $1`, [bankDep])).bank_check, "mismatch");
+assert.equal((await one(`select count(*)::int n from discrepancies
+  where deposit_id = $1 and code = 'BANK_MISMATCH' and resolved_at is null`, [bankDep])).n, 1);
+assert.equal((await one(`select count(*)::int n from bank_verifications where deposit_id = $1`, [bankDep])).n, 2);
+
+await as(roNorth, () => q(`select record_bank_verification($1, 'mock', 'confirmed', 'UBIN/CONF/9',
+  '{}'::jsonb, '{"status":"confirmed"}'::jsonb)`, [bankDep]));
+const confirmedBank = await one(`select bank_check, bank_check_ref from deposits where id = $1`, [bankDep]);
+assert.equal(confirmedBank.bank_check, "confirmed");
+assert.equal(confirmedBank.bank_check_ref, "UBIN/CONF/9");
+assert.equal((await one(`select count(*)::int n from discrepancies
+  where deposit_id = $1 and code = 'BANK_MISMATCH' and resolved_at is null`, [bankDep])).n, 0);
+
+await as(roNorth, () => q(`select record_bank_verification($1, 'mock', 'unavailable', null, '{}'::jsonb, '{}'::jsonb)`, [bankDep]));
+assert.equal((await one(`select bank_check from deposits where id = $1`, [bankDep])).bank_check, "confirmed");
+const verdicts = Object.fromEntries((await q(`select verdict, count(*)::int n from bank_verifications
+  where deposit_id = $1 group by verdict`, [bankDep])).map((r) => [r.verdict, r.n]));
+assert.deepEqual(verdicts, { mismatch: 2, confirmed: 1, unavailable: 1 });
+assert.equal((await as(userA, () => q(`select id from bank_verifications where deposit_id = $1`, [bankDep]))).length, 4);
+assert.equal((await as(userB, () => q(`select id from bank_verifications`))).length, 0);
+await as(roNorth, () => fails(q(`insert into bank_verifications (deposit_id, institution_id, provider, verdict)
+  values ($1, $2, 'mock', 'confirmed')`, [bankDep, instA]), /permission denied/));
+assert.equal((await one(`select count(*)::int n from audit_logs where entity_type = 'bank_verifications'`)).n, 4);
+ok("bank verifier: reviewer-only, mismatch flag deduped, confirmation resolves it, evidence audited and scoped");
+
 // --- audit + visibility ------------------------------------------------------
 const audit = await as(userA, () => q(`select action, entity_type, summary, actor_email from audit_logs
   where deposit_id = $1 and action = 'status_change' order by id`, [dep.id]));
