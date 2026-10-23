@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Download } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { ACTION_LABELS, ENTITY_LABELS, describeAudit } from "@/lib/audit";
 import { formatDateTime } from "@/lib/format";
 import { ROLE_LABELS } from "@/lib/labels";
-import { pageRange, param, searchTerm } from "@/lib/query";
+import { pageRange, param, searchTerm, withParams } from "@/lib/query";
 import type { AuditLog } from "@/lib/types";
 import { Badge, Card, EmptyState, PageHeader } from "@/components/ui";
 import { FilterBar, FilterSelect, Pagination } from "@/components/list-controls";
@@ -44,6 +45,14 @@ export default async function AuditPage({ searchParams }: PageProps<"/audit">) {
           user.role === "admin"
             ? "Every change, sign-in, document view and export across the portal. Entries are append-only and cannot be edited or deleted."
             : "Every change, sign-in, document view and export within your scope. Entries are append-only and cannot be edited or deleted."
+        }
+        actions={
+          <a
+            href={`/api/audit/export${withParams(params, { page: null })}`}
+            className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 shadow-xs hover:bg-slate-50"
+          >
+            <Download className="size-4" /> Export CSV
+          </a>
         }
       />
       <FilterBar action="/audit" q={q} placeholder="Search summary or user email…" resetHref="/audit">

@@ -219,6 +219,8 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 
 **Acceptance.** Officials see all regions; regional officers see only their region; empty cells render neutral. **Effort.** 0.5–1 day.
 
+**Shipped 2026-10-23, without the RPC.** `region-heatmap.tsx` renders an SVG grid (cell counts printed inside, so it reads without colour) from the existing scoped `deposit_overview` rows the dashboard already pages through; each cell links to `/deposits?region=…&status=…`. Because the aggregation happens in the page, counts are exact only up to the paging cap (~5k rows) — the `region_status_matrix()` RPC stays the fix for a full register.
+
 ### G9. Read-only Auditor role
 
 **Why.** Spec defines "Auditors/External Reviewers (read-only)" (§3). Currently `/audit` is visible to every authenticated user (scoped), and there is no read-only persona.
@@ -267,7 +269,7 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 | ID | Change | Detail |
 |---|---|---|
 | QW1 | ✅ Harden profile provisioning at the DB level | `handle_new_user` cannot see `app_metadata` for admin-created users (GoTrue writes it just after the insert), so the app repaired it by hand in `seed.mjs` and `admin/actions.ts`. `supabase/migrations/20261023120000_profile_app_metadata_sync.sql` adds an `after update of raw_app_meta_data on auth.users` trigger that mirrors role/scope/name into `profiles`, applying only the keys present in `app_metadata` so Supabase's own keys never clobber a portal assignment. `db:verify` covers the late write, the partial update, and the audit row. Shipped 2026-10-23. |
-| QW2 | Turnaround badge in queues | Show `now() - submitted_at` on the verification queue and release list; makes G4 visible immediately. |
+| QW2 | ✅ Turnaround badge in queues | `AgeBadge` (from `daysSince()`) now shows "Waiting 3d" on the deposits, releases and demands queues and on the dashboard's verification queue, escalating amber at 2 days and red at 5. Shipped 2026-10-23. |
 | QW3 | Trigram indexes | `create extension if not exists pg_trgm; create index ... using gin (institution_name gin_trgm_ops)` on the overview source columns backing ILIKE search. |
 | QW4 | Demo-mode docs | Document `NEXT_PUBLIC_DEMO_MODE=true` in `.env.example` so the login page demo hints appear for reviewers. |
 
@@ -330,13 +332,13 @@ Ship P0 before any judging round; treat P1 as the "completeness" story.
 | §2.1 RBAC | Partial | G9 |
 | §2.2 dashboard | Built | G4 |
 | §2.2 document mgmt | Partial | G12 |
-| §2.2 search/filter | Built (ILIKE) | QW3 |
-| §2.2 alerts | Partial (no SMS, no request ageing) | G14, G4 |
-| §2.2 reporting | Built (CSV + print/PDF) | G8 |
+| §2.2 search/filter | Built (global search + ILIKE) | QW3 |
+| §2.2 alerts | Partial (no SMS, no auto-escalation) | G14 |
+| §2.2 reporting | Built (CSV + print/PDF + audit CSV) | — |
 | §2.3 bank API | Built (mock adapter + evidence) | — (G3 done) |
 | §2.3 OCR/ML | Missing | Deferred |
 | §2.3 blockchain | Missing | Deferred (hash anchor option) |
-| §2.3 smart escalation | Partial | G4 (ageing) |
+| §2.3 smart escalation | Partial (ageing visible) | G4 (auto-escalation) |
 | §2.3 dynamic approvals | Missing | G10 |
 | §2.3 mobile/chatbot | Partial | Deferred |
 | §2.3 eSign | Missing | Deferred |
