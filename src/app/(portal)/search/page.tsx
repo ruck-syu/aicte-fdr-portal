@@ -180,10 +180,7 @@ export default async function SearchPage({ searchParams }: PageProps<"/search">)
                 <ul className="divide-y divide-slate-100">
                   {institutions.map((i) => (
                     <li key={i.id} className="px-5 py-3">
-                      <Link
-                        href={`/deposits?q=${encodeURIComponent(i.aicte_id)}`}
-                        className="font-medium text-brand-700 hover:underline"
-                      >
+                      <Link href={`/institutions/${i.id}`} className="font-medium text-brand-700 hover:underline">
                         {i.name}
                       </Link>
                       <div className="mt-0.5 text-xs text-slate-500">

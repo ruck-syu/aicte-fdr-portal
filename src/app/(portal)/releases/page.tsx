@@ -157,7 +157,13 @@ export default async function ReleasesPage({ searchParams }: PageProps<"/release
                         {r.reference_no}
                       </Link>
                     </td>
-                    {official && <td className="max-w-56 truncate">{r.institution_name}</td>}
+                    {official && (
+                      <td className="max-w-56 truncate">
+                        <Link href={`/institutions/${r.institution_id}`} className="hover:text-brand-700 hover:underline">
+                          {r.institution_name}
+                        </Link>
+                      </td>
+                    )}
                     <td>
                       <Link href={`/deposits/${r.deposit_id}`} className="hover:underline">
                         {r.deposit_reference_no}

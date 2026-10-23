@@ -230,7 +230,12 @@ export default async function DepositsPage({ searchParams }: PageProps<"/deposit
                     </td>
                     {official && (
                       <td className="max-w-56">
-                        <div className="truncate">{d.institution_name}</div>
+                        <Link
+                          href={`/institutions/${d.institution_id}`}
+                          className="block truncate hover:text-brand-700 hover:underline"
+                        >
+                          {d.institution_name}
+                        </Link>
                         <div className="text-xs text-slate-500">
                           {d.institution_aicte_id} · {REGION_LABELS[d.region].split(" ")[0]}
                         </div>
