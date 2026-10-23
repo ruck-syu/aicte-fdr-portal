@@ -28,6 +28,8 @@ import { BankCheckBadge, ReleaseStatusBadge, SeverityBadge, StatusBadge, Validit
 import { ActionForm, SubmitButton } from "@/components/action-form";
 import { DocumentUploader } from "@/components/document-uploader";
 import { CommentThread } from "@/components/comment-thread";
+import { PrintButton } from "@/components/print-button";
+import { PrintMeta } from "@/components/print-meta";
 import {
   deleteDeposit,
   requestRelease,
@@ -35,6 +37,7 @@ import {
   reviewDeposit,
   setBankCheck,
   submitDeposit,
+  verifyWithBank,
 } from "../actions";
 import { deleteDocument } from "../../documents/actions";
 
@@ -135,6 +138,7 @@ export default async function DepositPage({ params, searchParams }: PageProps<"/
 
   return (
     <>
+      <PrintMeta label={`Deposit ${d.reference_no}`} />
       <PageHeader
         eyebrow={
           <Link href="/deposits" className="hover:underline">
@@ -156,6 +160,7 @@ export default async function DepositPage({ params, searchParams }: PageProps<"/
         }
         actions={
           <>
+            <PrintButton summary={`Deposit ${d.reference_no} · ${d.institution_name}`} />
             {editable && (
               <LinkButton href={`/deposits/${d.id}/edit`} variant="secondary">
                 <Pencil className="size-4" /> Edit details
@@ -438,7 +443,18 @@ export default async function DepositPage({ params, searchParams }: PageProps<"/
           )}
 
           {official && !["draft", "rejected", "released", "replaced"].includes(d.status) && (
-            <Card title="Bank verification" description="Record confirmation of the instrument from the issuing bank">
+            <Card title="Bank verification" description="Ask the configured bank verifier, or record a confirmation manually">
+              {["submitted", "discrepancy"].includes(d.status) && (
+                <div className="mb-4 rounded-md border border-slate-200 bg-slate-50/60 p-3">
+                  <ActionForm action={verifyWithBank} hideOk>
+                    <input type="hidden" name="id" value={d.id} />
+                    <SubmitButton size="sm">Verify with bank</SubmitButton>
+                  </ActionForm>
+                  <p className="mt-1.5 text-xs text-slate-500">
+                    Calls the configured provider (mock by default) and stores the request and response as audit evidence.
+                  </p>
+                </div>
+              )}
               <ActionForm action={setBankCheck} className="space-y-3">
                 <input type="hidden" name="id" value={d.id} />
                 <select name="bank_check" defaultValue={d.bank_check} className="input">

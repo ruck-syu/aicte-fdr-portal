@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { requireRole } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { formatDate } from "@/lib/format";
-import { REGION_LABELS, ROLE_LABELS } from "@/lib/labels";
+import { CLEARANCE_CELL_LABELS, REGION_LABELS, ROLE_LABELS } from "@/lib/labels";
 import { pageRange, param, searchTerm } from "@/lib/query";
 import type { AppRole, Institution, Profile } from "@/lib/types";
 import { Badge, Card, EmptyState, Field, PageHeader } from "@/components/ui";
@@ -103,9 +103,11 @@ export default async function UsersPage({ searchParams }: PageProps<"/admin/user
                         ? u.institution?.name
                         : u.role === "regional_officer" && u.region
                           ? REGION_LABELS[u.region]
-                          : u.role
-                            ? "All regions"
-                            : ""}
+                          : u.role === "release_officer" && u.clearance_cell
+                            ? `${CLEARANCE_CELL_LABELS[u.clearance_cell]} cell`
+                            : u.role
+                              ? "All regions"
+                              : ""}
                     </div>
                     {u.role ? <Badge tone="blue">{ROLE_LABELS[u.role]}</Badge> : <Badge tone="amber">Awaiting role</Badge>}
                     {!u.is_active && <Badge tone="red">Deactivated</Badge>}

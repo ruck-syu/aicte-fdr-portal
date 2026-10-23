@@ -13,13 +13,13 @@ This document lists only changes **worth implementing**, ordered by demo/complia
 
 | ID | Change | Priority | Effort | Spec section |
 |---|---|---|---|---|
-| G1 | Release clearance workflow (Grievance / Vigilance / PGRC) + NOC record | **P0** | 2–3 d | §2.1 workflow, §3C |
+| G1 | ✅ Release clearance workflow (Grievance / Vigilance / PGRC) + NOC record | **P0** | 2–3 d | §2.1 workflow, §3C |
 | G2 | ✅ Automated refund / penalty calculator | **P0** | 1–1.5 d | §2.3, §8 penalty |
-| G3 | Pluggable bank verification adapter (mock-first) | **P0** | 1–2 d | §2.3 bank API, §3A |
+| G3 | ✅ Pluggable bank verification adapter (mock-first) | **P0** | 1–2 d | §2.3 bank API, §3A |
 | G4 | ✅ KPI instrumentation (turnaround, renewal compliance, flag ageing) | **P0** | 0.5–1 d | §5 KPIs |
 | G5 | Regression + E2E tests for the above | **P0** | 1–2 d | §5 testing |
-| G6 | APH rate card for demands (Table 1.4) | **P1** | 0.5–1 d | §1 background |
-| G7 | PDF export + print stylesheet | **P1** | 1 d | §2.2 reporting |
+| G6 | ✅ APH rate card for demands (Table 1.4) | **P1** | 0.5–1 d | §1 background |
+| G7 | ✅ PDF export + print stylesheet | **P1** | 1 d | §2.2 reporting |
 | G8 | Region heatmap (region × status) | **P1** | 0.5–1 d | §2.2 analytics |
 | G9 | Read-only Auditor role | **P1** | 0.5 d | §3 roles |
 | G10 | Amount-threshold second approval for releases | **P1** | 1 d | §2.3 dynamic approvals |
@@ -76,6 +76,8 @@ This document lists only changes **worth implementing**, ordered by demo/complia
 - `npm run db:verify` covers the happy path and each blocking path.
 
 **Effort.** 2–3 days. **Risk.** New enum values require care with existing RLS helpers (`is_official`, `can_access_institution`, `is_reviewer`).
+
+**Shipped 2026-10-23.** `20261023160000_release_officer_role.sql` adds `release_officer` (on its own, because a new enum value cannot be used in the transaction that creates it) and `20261023160001_release_clearances.sql` adds the `clearance_cell` / `clearance_status` types, `profiles.clearance_cell` (validated by `profile_scope`), the `release_clearances` table with RLS, `record_clearance()` (cell-scoped, block requires a note), the three-row checklist seeded on create/submit and backfilled, `decide_release()` gated on all three cells with an administrator override (note required) and a mandatory NOC reference, and `release_requests.noc_reference`. Institutions read statuses through `release_clearance_summary()`; cell notes stay with officials. The release page renders the checklist with per-cell sign-off and only offers **Approve** once every cell has cleared, the admin user form assigns the cell, the sidebar badges pending clearances, and `db:verify` covers each blocking path (pending, block, non-admin, admin without a note, missing NOC), the override success path, status-only institution view, direct-write denial and the audit trail.
 
 ---
 
@@ -137,6 +139,8 @@ This document lists only changes **worth implementing**, ordered by demo/complia
 
 **Effort.** 1–2 days for mock; +3–5 days for a real bank/FI integration (out of scope now).
 
+**Shipped 2026-10-23.** `20261023150000_bank_verifications.sql` adds the audited `bank_verifications` evidence table and `record_bank_verification()`, which is reviewer-only, applies `confirmed` / `mismatch` / `unavailable` atomically, dedupes the open `BANK_MISMATCH` flag and resolves it on a later confirmation. `src/lib/bank/` provides the provider interface, a deterministic offline mock and an HTTP adapter selected by `BANK_VERIFIER` (default `mock`); the deposit page has a **Verify with bank** action beside the manual fallback. `db:verify` covers the mismatch dedupe, confirmation clearing the flag, unavailable leaving the status alone, RLS scoping, direct-insert denial and the audit trail.
+
 ---
 
 ### G4. KPI instrumentation
@@ -195,6 +199,8 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 
 **Acceptance.** Creating a demand for a known programme pre-fills the APH amount; an override without a note is rejected. **Effort.** 0.5–1 day. **Caveat:** transcribe values from the current APH edition, not from this summary.
 
+**Shipped 2026-10-23.** `20261023170000_aph_rate_card.sql` adds `aph_deposit_rates` (programme key, level, label, amount, effective window, source note; officials read it, only the service role maintains it), `deposit_demands.aph_rate_id` / `override_note`, and extends `demands_before_write()`: a demand priced from a card row must use that amount, or carry an override note, which the audit trigger records as `APH override: …`. The demand form picks a card row (pre-filling programme and amount), shows the rate source and effective date, and reveals a required reason when the amount is edited away from the card. Only the three Engineering & Technology rows quoted in the proposal are seeded — the rest still needs transcribing from the current APH edition. `db:verify` covers the scoped read, the accepted card amount, the rejected mismatch, the noted override and the audit entry.
+
 ### G7. PDF export + print stylesheet
 
 **Why.** Spec asks for Excel/PDF export (§2.2). Only CSV exists (`src/app/api/reports/[report]/route.ts`).
@@ -202,6 +208,8 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 **Change.** Start with an `@media print` stylesheet + "Print / Save as PDF" button on `/reports` and deposit/release detail pages (zero dependencies, A4 header/footer, totals). Only add a server-side PDF library if a watermarked, non-editable artifact is required. Log `report.export` with `format=pdf`.
 
 **Acceptance.** A4 output shows title, filters, generated-at, page numbers; audit row recorded. **Effort.** 1 day.
+
+**Shipped 2026-10-23.** `globals.css` adds a `@media print` block (`size: A4`, sidebar/pills/actions and all forms removed, repeating table headers, no shadows) plus a `.print-only` header. `PrintButton` + `logPrintExport()` add **Print / Save as PDF** to `/reports` and the deposit and release pages, writing the export to the audit trail as `report.export` (`PDF · …`) before opening the browser dialog. No PDF dependency: the browser's own engine produces the file, and the report's existing totals row prints with the table. Page numbers are the browser's header/footer setting, not a CSS feature.
 
 ### G8. Region heatmap
 
@@ -316,16 +324,16 @@ Ship P0 before any judging round; treat P1 as the "completeness" story.
 | Spec area | Status | Gap |
 |---|---|---|
 | §2.1 repository | Built | — |
-| §2.1 workflow | Partial (release) | G1, G10 |
+| §2.1 workflow | Built (3-cell clearance + NOC) | G10 |
 | §2.1 secure documents | Partial (e-sign) | G12; eSign deferred |
 | §2.1 audit | Built (non-blockchain) | — (QW1 done) |
-| §2.1 RBAC | Partial | G1, G9 |
+| §2.1 RBAC | Partial | G9 |
 | §2.2 dashboard | Built | G4 |
 | §2.2 document mgmt | Partial | G12 |
 | §2.2 search/filter | Built (ILIKE) | QW3 |
 | §2.2 alerts | Partial (no SMS, no request ageing) | G14, G4 |
-| §2.2 reporting | Partial (CSV only) | G7, G8 |
-| §2.3 bank API | Missing | G3 |
+| §2.2 reporting | Built (CSV + print/PDF) | G8 |
+| §2.3 bank API | Built (mock adapter + evidence) | — (G3 done) |
 | §2.3 OCR/ML | Missing | Deferred |
 | §2.3 blockchain | Missing | Deferred (hash anchor option) |
 | §2.3 smart escalation | Partial | G4 (ageing) |
@@ -333,7 +341,7 @@ Ship P0 before any judging round; treat P1 as the "completeness" story.
 | §2.3 mobile/chatbot | Partial | Deferred |
 | §2.3 eSign | Missing | Deferred |
 | §2.3 refund calculator | Built (stored sanction) | — (G2 done) |
-| §3 roles | Partial | G1, G9 |
+| §3 roles | Partial (clearance cell added) | G9 |
 | §4 security (MFA, retention) | Partial | G11, G13 |
 | §5 KPIs | Built (90-day turnaround, renewal, flag ageing) | — (G4 done) |
 | §5 testing | Partial | G5 |

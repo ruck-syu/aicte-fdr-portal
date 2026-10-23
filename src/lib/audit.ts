@@ -1,5 +1,5 @@
-import { DOCUMENT_LABELS, STATUS_LABELS, RELEASE_STATUS_LABELS } from "./labels";
-import type { AuditLog, DepositStatus, DocumentType, ReleaseStatus } from "./types";
+import { CLEARANCE_STATUS_LABELS, DOCUMENT_LABELS, STATUS_LABELS, RELEASE_STATUS_LABELS } from "./labels";
+import type { AuditLog, ClearanceStatus, DepositStatus, DocumentType, ReleaseStatus } from "./types";
 
 export const ENTITY_LABELS: Record<string, string> = {
   deposits: "Deposit",
@@ -7,6 +7,7 @@ export const ENTITY_LABELS: Record<string, string> = {
   discrepancies: "Discrepancy flag",
   comments: "Comment",
   release_requests: "Release request",
+  release_clearances: "Release clearance",
   deposit_demands: "Deposit demand",
   institutions: "Institution",
   profiles: "User",
@@ -31,6 +32,7 @@ type Changes = Record<string, unknown> & { status?: { from: string; to: string }
 function statusLabel(entity: string, s: string | undefined) {
   if (!s) return "—";
   if (entity === "release_requests") return RELEASE_STATUS_LABELS[s as ReleaseStatus] ?? s;
+  if (entity === "release_clearances") return CLEARANCE_STATUS_LABELS[s as ClearanceStatus] ?? s;
   return STATUS_LABELS[s as DepositStatus] ?? s;
 }
 

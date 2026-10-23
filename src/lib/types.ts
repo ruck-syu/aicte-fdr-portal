@@ -1,4 +1,4 @@
-export type AppRole = "institute_user" | "regional_officer" | "aicte_verifier" | "admin";
+export type AppRole = "institute_user" | "regional_officer" | "aicte_verifier" | "release_officer" | "admin";
 export type Region =
   | "central"
   | "eastern"
@@ -29,6 +29,8 @@ export type DocumentType =
   | "release_letter"
   | "other";
 export type ReleaseStatus = "draft" | "submitted" | "approved" | "rejected" | "withdrawn";
+export type ClearanceCell = "grievance" | "vigilance" | "pgrc";
+export type ClearanceStatus = "pending" | "cleared" | "blocked";
 export type ReleaseReason =
   | "course_closure"
   | "institution_closure"
@@ -46,6 +48,8 @@ export interface Profile {
   role: AppRole | null;
   institution_id: string | null;
   region: Region | null;
+  /** Only set for release_officer: the cell the officer signs for. */
+  clearance_cell: ClearanceCell | null;
   is_active: boolean;
   created_at: string;
 }
@@ -106,6 +110,19 @@ export interface DepositOverview extends Deposit {
   open_flags: number;
 }
 
+export type AphLevel = "diploma" | "undergraduate" | "postgraduate" | "other";
+
+export interface AphRate {
+  id: string;
+  program_key: string;
+  level: AphLevel;
+  program_label: string;
+  amount: number;
+  effective_from: string;
+  effective_to: string | null;
+  source_note: string | null;
+}
+
 export interface Demand {
   id: string;
   reference_no: string;
@@ -118,6 +135,10 @@ export interface Demand {
   due_date: string;
   status: DemandStatus;
   notes: string | null;
+  /** APH card row the amount was priced from, when one was chosen. */
+  aph_rate_id: string | null;
+  /** Why the amount departs from the card; audited. */
+  override_note: string | null;
   created_at: string;
 }
 
@@ -160,6 +181,8 @@ export interface ReleaseRequest {
   decided_by: string | null;
   decided_at: string | null;
   decision_note: string | null;
+  /** NOC reference recorded on approval. */
+  noc_reference: string | null;
   /** Frozen at approval; null while the request is undecided. */
   quote: ReleaseQuote | null;
   sanctioned_amount: number | null;
@@ -177,6 +200,25 @@ export interface ReleaseOverview extends ReleaseRequest {
   institution_name: string;
   institution_aicte_id: string;
   region: Region;
+}
+
+export interface ReleaseClearance {
+  id: string;
+  release_request_id: string;
+  institution_id: string;
+  cell: ClearanceCell;
+  status: ClearanceStatus;
+  note: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+  created_at: string;
+}
+
+/** What an institution may see: no cell notes. */
+export interface ClearanceSummary {
+  cell: ClearanceCell;
+  status: ClearanceStatus;
+  decided_at: string | null;
 }
 
 export interface DepositDocument {

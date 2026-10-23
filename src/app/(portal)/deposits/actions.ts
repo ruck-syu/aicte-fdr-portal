@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { refresh } from "next/cache";
 import { requireRole, requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { bankVerifier } from "@/lib/bank";
 import { friendlyError } from "@/lib/errors";
 import type { ActionState } from "@/lib/types";
 
@@ -185,6 +186,54 @@ export async function resolveDiscrepancy(_: ActionState, formData: FormData): Pr
   if (error) return { error: friendlyError(error) };
   refresh();
   return { ok: "Flag resolved." };
+}
+
+export async function verifyWithBank(_: ActionState, formData: FormData): Promise<ActionState> {
+  await requireRole("regional_officer", "aicte_verifier", "admin");
+  const id = String(formData.get("id") ?? "");
+  const supabase = await createClient();
+
+  const { data, error } = await supabase
+    .from("deposits")
+    .select("id, bank_name, ifsc, instrument_number, amount, maturity_date")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) return { error: friendlyError(error) };
+  if (!data) return { error: "Deposit not found." };
+
+  const request = {
+    bankName: data.bank_name,
+    ifsc: data.ifsc,
+    instrumentNumber: data.instrument_number,
+    amount: Number(data.amount),
+    maturityDate: data.maturity_date,
+  };
+
+  const verifier = bankVerifier();
+  let result;
+  try {
+    result = await verifier.verify(request);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "The bank verification service is unavailable." };
+  }
+
+  const { error: rpcError } = await supabase.rpc("record_bank_verification", {
+    p_deposit: id,
+    p_provider: verifier.name,
+    p_verdict: result.status,
+    p_reference: result.reference ?? "",
+    p_request: request,
+    p_response: result,
+  });
+  if (rpcError) return { error: friendlyError(rpcError) };
+  refresh();
+  return {
+    ok: {
+      confirmed: "Bank confirmed the instrument; the deposit's bank status is updated.",
+      mismatch: "The bank reports a mismatch. A BANK_MISMATCH flag was raised for review.",
+      unavailable: "The bank verification service is unavailable. Record the confirmation manually below.",
+    }[result.status],
+  };
 }
 
 export async function setBankCheck(_: ActionState, formData: FormData): Promise<ActionState> {

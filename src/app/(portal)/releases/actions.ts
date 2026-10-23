@@ -32,8 +32,30 @@ export async function decideRelease(_: ActionState, formData: FormData): Promise
     p_id: String(formData.get("id")),
     p_decision: decision,
     p_note: String(formData.get("note") ?? ""),
+    p_noc_reference: String(formData.get("noc_reference") ?? ""),
   });
   if (error) return { error: friendlyError(error) };
   refresh();
-  return { ok: decision === "approve" ? "Release approved. The deposit is marked as released." : "Release rejected." };
+  return { ok: decision === "approve" ? "Release approved and the NOC reference recorded." : "Release rejected." };
+}
+
+/** Grievance / Vigilance / PGRC sign-off on a submitted release. */
+export async function recordClearance(_: ActionState, formData: FormData): Promise<ActionState> {
+  await requireRole("release_officer", "admin");
+  const status = String(formData.get("status") ?? "");
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("record_clearance", {
+    p_id: String(formData.get("id")),
+    p_cell: String(formData.get("cell")),
+    p_status: status,
+    p_note: String(formData.get("note") ?? ""),
+  });
+  if (error) return { error: friendlyError(error) };
+  refresh();
+  return {
+    ok:
+      status === "blocked"
+        ? "Block recorded. The release stays on hold until the cell clears it."
+        : "Clearance recorded.",
+  };
 }

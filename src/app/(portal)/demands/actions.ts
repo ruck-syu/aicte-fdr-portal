@@ -17,6 +17,14 @@ const demandSchema = z.object({
   approval_valid_until: z.preprocess(blankToNull, z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable()),
   intimation_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Intimation date is required"),
   notes: z.preprocess(blankToNull, z.string().trim().max(2000).nullable()),
+  aph_rate_id: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() !== "" ? v : null),
+    z.string().uuid().nullable(),
+  ),
+  override_note: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() !== "" ? v : null),
+    z.string().trim().max(500).nullable(),
+  ),
 });
 
 export async function createDemand(_: ActionState, formData: FormData): Promise<ActionState> {

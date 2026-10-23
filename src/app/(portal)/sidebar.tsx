@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { requireUser, isOfficial } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { REGION_LABELS, ROLE_LABELS } from "@/lib/labels";
+import { CLEARANCE_CELL_LABELS, REGION_LABELS, ROLE_LABELS } from "@/lib/labels";
 import { NavLink } from "@/components/nav-link";
 import { Logo } from "@/components/logo";
 import { Skeleton } from "@/components/ui";
@@ -26,7 +26,7 @@ const iconCls = "size-4 shrink-0 opacity-80";
 export async function Sidebar() {
   const user = await requireUser();
   const supabase = await createClient();
-  const [{ data: unread }, { count: pending }] = await Promise.all([
+  const [{ data: unread }, { count: pending }, { count: pendingClearances }] = await Promise.all([
     supabase.rpc("unread_notification_count"),
     isOfficial(user.role)
       ? supabase.from("deposits").select("id", { count: "exact", head: true }).eq("status", "submitted")
@@ -34,6 +34,13 @@ export async function Sidebar() {
           .from("deposits")
           .select("id", { count: "exact", head: true })
           .in("status", ["draft", "discrepancy"]),
+    user.role === "release_officer" && user.clearance_cell
+      ? supabase
+          .from("release_clearances")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "pending")
+          .eq("cell", user.clearance_cell)
+      : Promise.resolve({ count: 0 }),
   ]);
   const official = isOfficial(user.role);
 
@@ -42,7 +49,9 @@ export async function Sidebar() {
       ? user.institution?.name
       : user.role === "regional_officer" && user.region
         ? REGION_LABELS[user.region]
-        : "All regions";
+        : user.role === "release_officer" && user.clearance_cell
+          ? `${CLEARANCE_CELL_LABELS[user.clearance_cell]} cell`
+          : "All regions";
 
   const nav = (
     <nav className="space-y-0.5">
@@ -55,7 +64,7 @@ export async function Sidebar() {
       <NavLink href="/demands">
         <ClipboardList className={iconCls} /> Deposit demands
       </NavLink>
-      <NavLink href="/releases">
+      <NavLink href="/releases" badge={user.role === "release_officer" ? (pendingClearances ?? 0) : undefined}>
         <Undo2 className={iconCls} /> Release requests
       </NavLink>
       <NavLink href="/notifications" badge={(unread as number | null) ?? 0}>

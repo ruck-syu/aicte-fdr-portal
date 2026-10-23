@@ -7,6 +7,8 @@ import { formatDate, formatINR } from "@/lib/format";
 import { param } from "@/lib/query";
 import { REPORTS, runReport, type ReportKey } from "@/lib/reports";
 import { Card, EmptyState, PageHeader, cx } from "@/components/ui";
+import { PrintButton } from "@/components/print-button";
+import { PrintMeta } from "@/components/print-meta";
 
 export const metadata: Metadata = { title: "Reports" };
 
@@ -22,11 +24,12 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
 
   return (
     <>
+      <PrintMeta label={report.title} />
       <PageHeader
         title="Reports"
         description="Compliance views across your jurisdiction. Every export is recorded in the audit trail."
       />
-      <div className="mb-5 flex flex-wrap gap-1.5">
+      <div className="no-print mb-5 flex flex-wrap gap-1.5">
         {(Object.entries(REPORTS) as [ReportKey, string][])
           .filter(([k]) => k !== "deposits")
           .map(([k, label]) => (
@@ -47,12 +50,15 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
         title={report.title}
         description={report.description}
         actions={
-          <a
-            href={`/api/reports/${key}`}
-            className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-xs hover:bg-slate-50"
-          >
-            <Download className="size-3.5" /> CSV
-          </a>
+          <span className="no-print flex items-center gap-2">
+            <a
+              href={`/api/reports/${key}`}
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-xs hover:bg-slate-50"
+            >
+              <Download className="size-3.5" /> CSV
+            </a>
+            <PrintButton summary={`${report.title} report (${report.rows.length} rows)`} />
+          </span>
         }
         bodyClassName="p-0"
       >
