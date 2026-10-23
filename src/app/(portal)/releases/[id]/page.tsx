@@ -1,0 +1,266 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { FileText, History } from "lucide-react";
+import { requireUser, isOfficial } from "@/lib/auth";
+import { createClient } from "@/lib/supabase/server";
+import { displayName, formatBytes, formatDate, formatDateTime, formatINR } from "@/lib/format";
+import { DOCUMENT_LABELS, RELEASE_REASON_LABELS } from "@/lib/labels";
+import type { AppSettings, Comment, DepositDocument, DocumentType, ReleaseOverview } from "@/lib/types";
+import { Alert, Badge, Card, DescriptionList, EmptyState, PageHeader } from "@/components/ui";
+import { ReleaseStatusBadge } from "@/components/badges";
+import { ActionForm, SubmitButton } from "@/components/action-form";
+import { DocumentUploader } from "@/components/document-uploader";
+import { CommentThread } from "@/components/comment-thread";
+import { decideRelease, submitRelease, withdrawRelease } from "../actions";
+import { deleteDocument } from "../../documents/actions";
+
+export const metadata: Metadata = { title: "Release request" };
+
+type DocRow = DepositDocument & { uploader: { full_name: string | null; email: string } | null };
+
+export default async function ReleasePage({ params }: PageProps<"/releases/[id]">) {
+  const { id } = await params;
+  const user = await requireUser();
+  const official = isOfficial(user.role);
+  const supabase = await createClient();
+
+  const { data } = await supabase.from("release_overview").select("*").eq("id", id).maybeSingle();
+  if (!data) notFound();
+  const r = data as ReleaseOverview;
+
+  const [docsRes, commentsRes, settingsRes, peopleRes] = await Promise.all([
+    supabase
+      .from("deposit_documents")
+      .select("*, uploader:profiles!deposit_documents_uploaded_by_fkey(full_name, email)")
+      .eq("release_request_id", id)
+      .order("doc_type")
+      .order("version", { ascending: false }),
+    supabase
+      .from("comments")
+      .select("*, author:profiles!comments_author_id_fkey(full_name, email, role)")
+      .eq("release_request_id", id)
+      .order("created_at"),
+    supabase.from("app_settings").select("*").maybeSingle(),
+    supabase
+      .from("profiles")
+      .select("id, full_name, email")
+      .in("id", [r.requested_by, r.decided_by].filter(Boolean) as string[]),
+  ]);
+  const docs = (docsRes.data ?? []) as DocRow[];
+  const comments = (commentsRes.data ?? []) as Comment[];
+  const settings = settingsRes.data as AppSettings | null;
+  const people = new Map((peopleRes.data ?? []).map((p) => [p.id, p]));
+
+  const isOwner = user.role === "institute_user" && user.institution_id === r.institution_id;
+  const required = settings?.release_required_documents ?? (["release_letter", "affidavit"] as DocumentType[]);
+  const missing = required.filter((t) => !docs.some((x) => x.is_current && x.doc_type === t));
+  const docTypes: DocumentType[] = [
+    ...required,
+    ...(["clearance_certificate", "fdr_scan", "other"] as DocumentType[]).filter((t) => !required.includes(t)),
+  ];
+
+  return (
+    <>
+      <PageHeader
+        eyebrow={
+          <Link href="/releases" className="hover:underline">
+            Release requests
+          </Link>
+        }
+        title={
+          <span className="flex flex-wrap items-center gap-3">
+            {r.reference_no} <ReleaseStatusBadge status={r.status} />
+          </span>
+        }
+        description={
+          <>
+            Release of{" "}
+            <Link href={`/deposits/${r.deposit_id}`} className="font-medium text-brand-700 hover:underline">
+              {r.deposit_reference_no}
+            </Link>{" "}
+            · {r.institution_name}
+          </>
+        }
+        actions={
+          isOwner && (r.status === "draft" || r.status === "submitted") ? (
+            <>
+              {r.status === "draft" && (
+                <ActionForm action={submitRelease} hideOk>
+                  <input type="hidden" name="id" value={r.id} />
+                  <SubmitButton>Submit for approval</SubmitButton>
+                </ActionForm>
+              )}
+              <ActionForm action={withdrawRelease} confirm="Withdraw this release request?" hideOk>
+                <input type="hidden" name="id" value={r.id} />
+                <SubmitButton variant="secondary">Withdraw</SubmitButton>
+              </ActionForm>
+            </>
+          ) : null
+        }
+      />
+
+      {r.status === "draft" && isOwner && missing.length > 0 && (
+        <div className="mb-4">
+          <Alert tone="amber" title="Documents required before submission">
+            Upload: {missing.map((t) => DOCUMENT_LABELS[t]).join(", ")}.
+          </Alert>
+        </div>
+      )}
+      {r.status === "approved" && (
+        <div className="mb-4">
+          <Alert tone="green" title="Release approved">
+            Approved {formatDateTime(r.decided_at)} by {displayName(people.get(r.decided_by ?? ""))}. The deposit is
+            recorded as released.
+          </Alert>
+        </div>
+      )}
+      {r.status === "rejected" && (
+        <div className="mb-4">
+          <Alert tone="red" title="Release rejected">
+            {r.decision_note}
+          </Alert>
+        </div>
+      )}
+
+      <div className="grid gap-6 xl:grid-cols-3">
+        <div className="space-y-6 xl:col-span-2">
+          <Card title="Request">
+            <DescriptionList
+              items={[
+                { label: "Reason", value: RELEASE_REASON_LABELS[r.reason] },
+                { label: "Requested by", value: displayName(people.get(r.requested_by ?? "")) },
+                { label: "Submitted", value: r.submitted_at ? formatDateTime(r.submitted_at) : "Not yet submitted" },
+                { label: "Deposit amount", value: <span className="num">{formatINR(r.amount)}</span> },
+                { label: "Instrument", value: `${r.instrument_number} · ${r.bank_name}` },
+                { label: "Maturity", value: formatDate(r.maturity_date) },
+                { label: "Details", value: r.details, wide: true },
+                ...(r.decided_at
+                  ? [
+                      { label: "Decided", value: `${formatDateTime(r.decided_at)} by ${displayName(people.get(r.decided_by ?? ""))}` },
+                      { label: "Decision note", value: r.decision_note, wide: true },
+                    ]
+                  : []),
+              ]}
+            />
+          </Card>
+
+          <Card
+            title="Supporting documents"
+            description={`Required: ${required.map((t) => DOCUMENT_LABELS[t]).join(", ")}`}
+            bodyClassName="p-0"
+          >
+            {docs.length === 0 ? (
+              <EmptyState title="No documents uploaded yet" />
+            ) : (
+              <ul className="divide-y divide-slate-100">
+                {docs.map((doc) => (
+                  <li key={doc.id} className={`flex items-center gap-3 px-5 py-3 ${doc.is_current ? "" : "bg-slate-50/60"}`}>
+                    {doc.is_current ? (
+                      <FileText className="size-4 shrink-0 text-brand-600" />
+                    ) : (
+                      <History className="size-4 shrink-0 text-slate-400" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="font-medium">{DOCUMENT_LABELS[doc.doc_type]}</span>
+                        <Badge tone={doc.is_current ? "blue" : "slate"}>v{doc.version}</Badge>
+                      </div>
+                      <div className="truncate text-xs text-slate-500">
+                        {doc.file_name} · {formatBytes(doc.size_bytes)} · {displayName(doc.uploader)} ·{" "}
+                        {formatDateTime(doc.uploaded_at)}
+                      </div>
+                    </div>
+                    <a
+                      href={`/api/documents/${doc.id}`}
+                      target="_blank"
+                      rel="noopener"
+                      className="text-xs font-medium text-brand-700 hover:underline"
+                    >
+                      View
+                    </a>
+                    {r.status === "draft" && doc.uploaded_by === user.id && (
+                      <ActionForm action={deleteDocument} confirm="Remove this document?" hideOk>
+                        <input type="hidden" name="id" value={doc.id} />
+                        <SubmitButton size="sm" variant="ghost">
+                          Remove
+                        </SubmitButton>
+                      </ActionForm>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {isOwner && r.status === "draft" && (
+              <div className="border-t border-slate-100 p-5">
+                <DocumentUploader
+                  institutionId={r.institution_id}
+                  releaseRequestId={r.id}
+                  docTypes={docTypes}
+                  defaultType={missing[0] ?? docTypes[0]}
+                />
+              </div>
+            )}
+          </Card>
+
+          <Card title="Comments">
+            <CommentThread comments={comments} releaseRequestId={r.id} canComment={r.status !== "withdrawn"} />
+          </Card>
+        </div>
+
+        <div className="space-y-6">
+          {official && r.status === "submitted" && (
+            <Card title="Decision" className="border-brand-200 ring-1 ring-brand-100">
+              <ActionForm action={decideRelease} className="space-y-3">
+                <input type="hidden" name="id" value={r.id} />
+                <ul className="space-y-1 text-sm text-slate-600">
+                  {required.map((t) => (
+                    <li key={t}>
+                      {docs.some((x) => x.is_current && x.doc_type === t) ? "✓" : "✗"} {DOCUMENT_LABELS[t]}
+                    </li>
+                  ))}
+                </ul>
+                <textarea name="note" rows={3} className="input" placeholder="Decision note (required to reject)" />
+                <div className="flex gap-2">
+                  <SubmitButton
+                    name="decision"
+                    value="approve"
+                    variant="success"
+                    confirm="Approve release? The deposit will be marked as released."
+                  >
+                    Approve release
+                  </SubmitButton>
+                  <SubmitButton name="decision" value="reject" variant="danger">
+                    Reject
+                  </SubmitButton>
+                </div>
+              </ActionForm>
+            </Card>
+          )}
+          <Card title="Workflow">
+            <ol className="space-y-3 text-sm">
+              {[
+                ["Draft prepared", true],
+                ["Documents uploaded", missing.length === 0],
+                ["Submitted for approval", !!r.submitted_at],
+                [
+                  r.status === "rejected" ? "Rejected" : r.status === "withdrawn" ? "Withdrawn" : "Approved & released",
+                  ["approved", "rejected", "withdrawn"].includes(r.status),
+                ],
+              ].map(([label, done]) => (
+                <li key={label as string} className="flex items-center gap-2.5">
+                  <span
+                    className={`grid size-5 place-items-center rounded-full text-[11px] ${done ? "bg-brand-600 text-white" : "bg-slate-200 text-slate-500"}`}
+                  >
+                    {done ? "✓" : ""}
+                  </span>
+                  <span className={done ? "text-slate-900" : "text-slate-500"}>{label as string}</span>
+                </li>
+              ))}
+            </ol>
+          </Card>
+        </div>
+      </div>
+    </>
+  );
+}

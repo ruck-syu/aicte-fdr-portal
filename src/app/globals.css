@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@theme {
+  --color-brand-50: #eef4fb;
+  --color-brand-100: #d6e4f5;
+  --color-brand-200: #adc8eb;
+  --color-brand-300: #7ea6dc;
+  --color-brand-400: #4f80c8;
+  --color-brand-500: #2f62b0;
+  --color-brand-600: #204c93;
+  --color-brand-700: #1b3d77;
+  --color-brand-800: #172f5b;
+  --color-brand-900: #122445;
+  --color-saffron-500: #e8871e;
+}
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+  }
+  ::selection {
+    @apply bg-brand-200;
+  }
+}
+
+@layer components {
+  .input {
+    @apply block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-xs
+      placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none
+      disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500;
+  }
+  .data-table {
+    @apply w-full text-left text-sm;
+  }
+  .data-table thead th {
+    @apply border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-medium tracking-wide whitespace-nowrap text-slate-500 uppercase;
+  }
+  .data-table tbody td {
+    @apply border-b border-slate-100 px-4 py-3 align-top;
+  }
+  .data-table tbody tr:last-child td {
+    @apply border-b-0;
+  }
+  .data-table tbody tr:hover td {
+    @apply bg-slate-50/70;
+  }
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+}
