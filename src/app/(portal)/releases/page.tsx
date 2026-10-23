@@ -7,7 +7,7 @@ import { RELEASE_REASON_LABELS, RELEASE_STATUS_LABELS } from "@/lib/labels";
 import { pageRange, param, searchTerm } from "@/lib/query";
 import type { ReleaseOverview, ReleaseStatus } from "@/lib/types";
 import { Card, EmptyState, PageHeader } from "@/components/ui";
-import { ReleaseStatusBadge } from "@/components/badges";
+import { AgeBadge, ReleaseStatusBadge } from "@/components/badges";
 import { FilterBar, FilterSelect, Pagination } from "@/components/list-controls";
 
 export const metadata: Metadata = { title: "Release requests" };
@@ -91,7 +91,10 @@ export default async function ReleasesPage({ searchParams }: PageProps<"/release
                     </td>
                     <td className="num text-right">{formatINR(r.amount)}</td>
                     <td>{RELEASE_REASON_LABELS[r.reason]}</td>
-                    <td className="num whitespace-nowrap">{formatDate(r.submitted_at)}</td>
+                    <td className="whitespace-nowrap">
+                      <div className="num">{formatDate(r.submitted_at)}</div>
+                      {r.status === "submitted" && <AgeBadge since={r.submitted_at} label="Waiting" className="mt-1" />}
+                    </td>
                     <td>
                       <ReleaseStatusBadge status={r.status} />
                     </td>

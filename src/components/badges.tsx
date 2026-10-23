@@ -1,4 +1,5 @@
 import { Badge, type Tone } from "./ui";
+import { daysSince } from "@/lib/format";
 import {
   BANK_CHECK_LABELS,
   CLEARANCE_STATUS_LABELS,
@@ -47,6 +48,30 @@ export function ReleaseStatusBadge({ status }: { status: ReleaseStatus }) {
     status
   ] as Tone;
   return <Badge tone={tone}>{RELEASE_STATUS_LABELS[status]}</Badge>;
+}
+
+/** "Waiting 3d" — how long a queue item has been open. Escalates with age. */
+export function AgeBadge({
+  since,
+  label = "Waiting",
+  warn = 2,
+  danger = 5,
+  className,
+}: {
+  since: string | null | undefined;
+  label?: string;
+  warn?: number;
+  danger?: number;
+  className?: string;
+}) {
+  const days = daysSince(since);
+  if (days === null) return null;
+  const tone: Tone = days >= danger ? "red" : days >= warn ? "amber" : "slate";
+  return (
+    <Badge tone={tone} className={className}>
+      {days === 0 ? `${label} today` : `${label} ${days}d`}
+    </Badge>
+  );
 }
 
 export function ClearanceStatusBadge({ status }: { status: ClearanceStatus }) {

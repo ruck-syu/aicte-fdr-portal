@@ -5,10 +5,11 @@ import { requireUser, isOfficial } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { formatDate, formatINR, formatINRCompact, daysLabel } from "@/lib/format";
 import { INSTRUMENT_SHORT, REGION_LABELS, ROLE_LABELS } from "@/lib/labels";
-import type { DashboardStats, DemandOverview, DepositOverview } from "@/lib/types";
+import type { DashboardStats, DemandOverview, DepositOverview, DepositStatus, Region } from "@/lib/types";
 import { Card, DescriptionList, EmptyState, LinkButton, PageHeader, Stat } from "@/components/ui";
-import { DemandStatusBadge, StatusBadge, ValidityBadge } from "@/components/badges";
+import { AgeBadge, DemandStatusBadge, StatusBadge, ValidityBadge } from "@/components/badges";
 import { MaturityChart } from "@/components/maturity-chart";
+import { RegionHeatmap, type RegionStatusCounts } from "@/components/region-heatmap";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
@@ -45,6 +46,37 @@ export default async function DashboardPage() {
       .order("due_date")
       .limit(6),
   ]);
+
+  // Region × status is a cross-tab, and there is no rollup function for it.
+  // Read the scoped view in pages and tally here; RLS still decides what is visible.
+  const regionRows: RegionStatusCounts[] = [];
+  if (official) {
+    const pageSize = 1000;
+    const regions =
+      user.role === "regional_officer" && user.region
+        ? [user.region]
+        : (Object.keys(REGION_LABELS) as Region[]);
+    const buckets = new Map<Region, RegionStatusCounts>(
+      regions.map((region) => [region, { region, held: 0, pending: 0, returned: 0, released: 0 }]),
+    );
+    for (let page = 0; page < 50; page++) {
+      const { data, error } = await supabase
+        .from("deposit_overview")
+        .select("region, status")
+        .range(page * pageSize, page * pageSize + pageSize - 1);
+      if (error || !data?.length) break;
+      for (const row of data as { region: Region; status: DepositStatus }[]) {
+        const bucket = buckets.get(row.region);
+        if (!bucket) continue;
+        if (row.status === "verified" || row.status === "release_requested") bucket.held += 1;
+        else if (row.status === "submitted") bucket.pending += 1;
+        else if (row.status === "discrepancy") bucket.returned += 1;
+        else if (row.status === "released") bucket.released += 1;
+      }
+      if (data.length < pageSize) break;
+    }
+    regionRows.push(...buckets.values());
+  }
 
   const s = (statsRes.data ?? {}) as DashboardStats;
   const upcoming = (upcomingRes.data ?? []) as DepositOverview[];
@@ -170,33 +202,8 @@ export default async function DashboardPage() {
         </Card>
 
         {official ? (
-          <Card title="Holdings by region" bodyClassName="p-0">
-            {s.by_region?.length ? (
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Region</th>
-                    <th className="text-right">FDRs</th>
-                    <th className="text-right">Value</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {s.by_region.map((r) => (
-                    <tr key={r.region}>
-                      <td>
-                        <Link className="hover:underline" href={`/deposits?region=${r.region}&status=held`}>
-                          {REGION_LABELS[r.region]}
-                        </Link>
-                      </td>
-                      <td className="num text-right">{r.count}</td>
-                      <td className="num text-right">{formatINRCompact(r.value)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <EmptyState title="No verified deposits yet" />
-            )}
+          <Card title="Region × status" description="Instruments by region and workflow state" bodyClassName="p-4">
+            <RegionHeatmap rows={regionRows} />
           </Card>
         ) : (
           <Card
@@ -305,8 +312,9 @@ export default async function DashboardPage() {
                       <Link href={`/deposits/${d.id}`} className="font-medium text-brand-700 hover:underline">
                         {d.reference_no}
                       </Link>
-                      <div className="text-xs text-slate-500">
-                        {official ? `Submitted ${formatDate(d.submitted_at)}` : d.instrument_number}
+                      <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+                        <span>{official ? `Submitted ${formatDate(d.submitted_at)}` : d.instrument_number}</span>
+                        {official && d.status === "submitted" && <AgeBadge since={d.submitted_at} label="Waiting" />}
                       </div>
                     </td>
                     {official && <td className="max-w-48 truncate">{d.institution_name}</td>}

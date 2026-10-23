@@ -8,7 +8,7 @@ import { INSTRUMENT_SHORT, INSTRUMENT_LABELS, REGION_LABELS, STATUS_LABELS, VALI
 import { pageRange, param, searchTerm, withParams } from "@/lib/query";
 import type { DepositOverview, DepositStatus, InstrumentType, Region, Validity } from "@/lib/types";
 import { Card, EmptyState, LinkButton, PageHeader } from "@/components/ui";
-import { StatusBadge, ValidityBadge } from "@/components/badges";
+import { AgeBadge, StatusBadge, ValidityBadge } from "@/components/badges";
 import { FilterBar, FilterSelect, Pagination } from "@/components/list-controls";
 
 export const metadata: Metadata = { title: "Deposits" };
@@ -181,6 +181,7 @@ export default async function DepositsPage({ searchParams }: PageProps<"/deposit
                       <div className="flex flex-wrap items-center gap-1.5">
                         <StatusBadge status={d.status} />
                         <ValidityBadge validity={d.validity} />
+                        {d.status === "submitted" && <AgeBadge since={d.submitted_at} label="Submitted" />}
                         {d.open_errors > 0 && (
                           <span className="text-xs font-medium text-amber-700">
                             {d.open_errors} flag{d.open_errors === 1 ? "" : "s"}
