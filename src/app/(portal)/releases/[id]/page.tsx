@@ -5,8 +5,8 @@ import { FileText, History } from "lucide-react";
 import { requireUser, isOfficial } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { displayName, formatBytes, formatDate, formatDateTime, formatINR } from "@/lib/format";
-import { DOCUMENT_LABELS, RELEASE_REASON_LABELS } from "@/lib/labels";
-import type { AppSettings, Comment, DepositDocument, DocumentType, ReleaseOverview } from "@/lib/types";
+import { DOCUMENT_LABELS, QUOTE_REASON_LABELS, RELEASE_REASON_LABELS } from "@/lib/labels";
+import type { AppSettings, Comment, DepositDocument, DocumentType, ReleaseOverview, ReleaseQuote } from "@/lib/types";
 import { Alert, Badge, Card, DescriptionList, EmptyState, PageHeader } from "@/components/ui";
 import { ReleaseStatusBadge } from "@/components/badges";
 import { ActionForm, SubmitButton } from "@/components/action-form";
@@ -29,7 +29,7 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
   if (!data) notFound();
   const r = data as ReleaseOverview;
 
-  const [docsRes, commentsRes, settingsRes, peopleRes] = await Promise.all([
+  const [docsRes, commentsRes, settingsRes, peopleRes, quoteRes] = await Promise.all([
     supabase
       .from("deposit_documents")
       .select("*, uploader:profiles!deposit_documents_uploaded_by_fkey(full_name, email)")
@@ -46,7 +46,12 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
       .from("profiles")
       .select("id, full_name, email")
       .in("id", [r.requested_by, r.decided_by].filter(Boolean) as string[]),
+    supabase.rpc("release_quote", { p_deposit: r.deposit_id }),
   ]);
+  const liveQuote = (quoteRes.data ?? null) as ReleaseQuote | null;
+  // An approved release keeps the quote frozen at approval; never recompute it.
+  const sanctionedQuote = r.quote ?? null;
+  const breakdown = sanctionedQuote ?? liveQuote;
   const docs = (docsRes.data ?? []) as DocRow[];
   const comments = (commentsRes.data ?? []) as Comment[];
   const settings = settingsRes.data as AppSettings | null;
@@ -111,7 +116,7 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
         <div className="mb-4">
           <Alert tone="green" title="Release approved">
             Approved {formatDateTime(r.decided_at)} by {displayName(people.get(r.decided_by ?? ""))}. The deposit is
-            recorded as released.
+            recorded as released{r.sanctioned_amount !== null ? ` and ${formatINR(r.sanctioned_amount)} sanctioned` : ""}.
           </Alert>
         </div>
       )}
@@ -209,6 +214,58 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
         </div>
 
         <div className="space-y-6">
+          <Card
+            title={sanctionedQuote ? "Sanctioned refund" : "Refund estimate"}
+            description={
+              sanctionedQuote
+                ? `Frozen when the release was approved on ${formatDate(r.sanctioned_at)}.`
+                : "Indicative only — the final sanction rests with AICTE."
+            }
+          >
+            {breakdown ? (
+              <DescriptionList
+                items={[
+                  { label: "Principal", value: <span className="num">{formatINR(breakdown.principal)}</span> },
+                  {
+                    label: `Interest (${breakdown.interest_rate}% · ${breakdown.holding_days} days)`,
+                    value: <span className="num">{formatINR(breakdown.accrued_interest)}</span>,
+                  },
+                  {
+                    label: `Penalty (${breakdown.penalty_pct}%)`,
+                    value: (
+                      <span className={breakdown.penalty_amount > 0 ? "num text-red-700" : "num"}>
+                        {formatINR(breakdown.penalty_amount)}
+                      </span>
+                    ),
+                  },
+                  {
+                    label: sanctionedQuote ? "Sanctioned amount" : "Net payable",
+                    value: (
+                      <span className="num font-semibold">
+                        {formatINR(sanctionedQuote ? r.sanctioned_amount : breakdown.net_payable)}
+                      </span>
+                    ),
+                  },
+                  ...(breakdown.shortfall > 0
+                    ? [{ label: "Below demanded amount", value: <span className="num">{formatINR(breakdown.shortfall)}</span> }]
+                    : []),
+                  ...(breakdown.reasons.length > 0
+                    ? [
+                        {
+                          label: "Notes",
+                          value: breakdown.reasons.map((x) => QUOTE_REASON_LABELS[x] ?? x).join("; "),
+                          wide: true,
+                        },
+                      ]
+                    : []),
+                ]}
+              />
+            ) : (
+              <EmptyState title="Estimate unavailable">
+                The refund for this deposit cannot be computed right now.
+              </EmptyState>
+            )}
+          </Card>
           {official && r.status === "submitted" && (
             <Card title="Decision" className="border-brand-200 ring-1 ring-brand-100">
               <ActionForm action={decideRelease} className="space-y-3">

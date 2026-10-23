@@ -129,6 +129,24 @@ export interface DemandOverview extends Demand {
   is_overdue: boolean;
 }
 
+export interface ReleaseQuote {
+  deposit_id: string;
+  principal: number;
+  issue_date: string;
+  maturity_date: string;
+  as_of: string;
+  holding_days: number;
+  holding_years: number;
+  interest_rate: number;
+  accrued_interest: number;
+  penalty_pct: number;
+  penalty_amount: number;
+  shortfall: number;
+  net_payable: number;
+  eligible: boolean;
+  reasons: string[];
+}
+
 export interface ReleaseRequest {
   id: string;
   reference_no: string;
@@ -142,6 +160,11 @@ export interface ReleaseRequest {
   decided_by: string | null;
   decided_at: string | null;
   decision_note: string | null;
+  /** Frozen at approval; null while the request is undecided. */
+  quote: ReleaseQuote | null;
+  sanctioned_amount: number | null;
+  sanctioned_by: string | null;
+  sanctioned_at: string | null;
   created_at: string;
 }
 
@@ -235,6 +258,10 @@ export interface AppSettings {
   submission_window_days: number;
   required_documents: DocumentType[];
   release_required_documents: DocumentType[];
+  /** Release/refund policy used by release_quote(). */
+  min_holding_years: number;
+  early_release_penalty_pct: number;
+  default_interest_rate: number;
 }
 
 export interface DashboardStats {
@@ -251,6 +278,12 @@ export interface DashboardStats {
   released_value: number;
   open_demands: number;
   overdue_demands: number;
+  /** Service levels; null when the sample is empty. */
+  avg_verification_hours: number | null;
+  p90_verification_hours: number | null;
+  renewal_compliance_pct: number | null;
+  open_flag_p50_days: number | null;
+  open_flag_p90_days: number | null;
   by_status: Partial<Record<DepositStatus, number>>;
   by_region: { region: Region; count: number; value: number }[];
   maturity_timeline: { month: string; count: number; value: number }[];

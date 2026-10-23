@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { formatDate, formatINR, formatINRCompact, daysLabel } from "@/lib/format";
 import { INSTRUMENT_SHORT, REGION_LABELS, ROLE_LABELS } from "@/lib/labels";
 import type { DashboardStats, DemandOverview, DepositOverview } from "@/lib/types";
-import { Card, EmptyState, LinkButton, PageHeader, Stat } from "@/components/ui";
+import { Card, DescriptionList, EmptyState, LinkButton, PageHeader, Stat } from "@/components/ui";
 import { DemandStatusBadge, StatusBadge, ValidityBadge } from "@/components/badges";
 import { MaturityChart } from "@/components/maturity-chart";
 
@@ -50,6 +50,10 @@ export default async function DashboardPage() {
   const upcoming = (upcomingRes.data ?? []) as DepositOverview[];
   const queue = (queueRes.data ?? []) as DepositOverview[];
   const demands = (demandsRes.data ?? []) as DemandOverview[];
+
+  const hours = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${v} h`);
+  const days = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${v} days`);
+  const pct = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${v}%`);
 
   const scope =
     user.role === "institute_user"
@@ -133,6 +137,24 @@ export default async function DashboardPage() {
         />
         <Stat label="Released to date" value={formatINRCompact(s.released_value ?? 0)} href="/deposits?status=released" />
       </div>
+
+      {official && (
+        <Card
+          className="mt-4"
+          title="Service levels"
+          description="Submission-to-verification turnaround (last 90 days), renewal compliance and how long open flags have been waiting."
+        >
+          <DescriptionList
+            items={[
+              { label: "Average verification", value: <span className="num">{hours(s.avg_verification_hours)}</span> },
+              { label: "Verification p90", value: <span className="num">{hours(s.p90_verification_hours)}</span> },
+              { label: "Renewal compliance", value: <span className="num">{pct(s.renewal_compliance_pct)}</span> },
+              { label: "Open flag median age", value: <span className="num">{days(s.open_flag_p50_days)}</span> },
+              { label: "Open flag p90 age", value: <span className="num">{days(s.open_flag_p90_days)}</span> },
+            ]}
+          />
+        </Card>
+      )}
 
       <div className="mt-6 grid gap-6 xl:grid-cols-3">
         <Card

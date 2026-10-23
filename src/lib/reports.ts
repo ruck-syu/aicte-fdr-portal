@@ -4,6 +4,7 @@ import { formatDate } from "./format";
 import { INSTRUMENT_SHORT, REGION_LABELS, RELEASE_REASON_LABELS, STATUS_LABELS, VALIDITY_LABELS } from "./labels";
 import { param, searchTerm } from "./query";
 import type {
+  DashboardStats,
   DemandOverview,
   DepositOverview,
   DepositStatus,
@@ -29,6 +30,8 @@ export const REPORTS = {
   lapsed: "Matured without renewal",
   flagged: "Flagged / returned deposits",
   "pending-releases": "Releases awaiting decision",
+  "sanctioned-refunds": "Sanctioned refunds",
+  kpis: "KPIs & service levels",
   deposits: "Full deposit register",
 } as const;
 export type ReportKey = keyof typeof REPORTS;
@@ -180,6 +183,65 @@ export async function runReport(supabase: SupabaseClient, key: ReportKey, params
           reason: RELEASE_REASON_LABELS[r.reason],
           submitted: r.submitted_at?.slice(0, 10) ?? null,
         })),
+      };
+    }
+    case "sanctioned-refunds": {
+      const { data } = await supabase
+        .from("release_overview")
+        .select("*")
+        .eq("status", "approved")
+        .order("sanctioned_at", { ascending: false });
+      return {
+        title: REPORTS[key],
+        description:
+          "Approved releases with the refund quote frozen at approval: principal, interest accrued to the sanction date and the early-release penalty deducted.",
+        columns: [
+          { key: "reference_no", label: "Request" },
+          { key: "institution", label: "Institution" },
+          { key: "deposit", label: "Deposit" },
+          { key: "sanctioned", label: "Sanctioned (₹)", numeric: true, money: true },
+          { key: "principal", label: "Principal (₹)", numeric: true, money: true },
+          { key: "interest", label: "Interest (₹)", numeric: true, money: true },
+          { key: "penalty", label: "Penalty (₹)", numeric: true, money: true },
+          { key: "sanctioned_at", label: "Sanctioned on" },
+        ],
+        rows: ((data ?? []) as ReleaseOverview[]).map((r) => ({
+          _href: `/releases/${r.id}`,
+          reference_no: r.reference_no,
+          institution: r.institution_name,
+          deposit: r.deposit_reference_no,
+          sanctioned: r.sanctioned_amount === null ? null : Number(r.sanctioned_amount),
+          principal: r.quote ? Number(r.quote.principal) : Number(r.amount),
+          interest: r.quote ? Number(r.quote.accrued_interest) : null,
+          penalty: r.quote ? Number(r.quote.penalty_amount) : null,
+          sanctioned_at: r.sanctioned_at?.slice(0, 10) ?? null,
+        })),
+      };
+    }
+    case "kpis": {
+      const { data } = await supabase.rpc("dashboard_stats");
+      const s = (data ?? {}) as DashboardStats;
+      const hours = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${v} h`);
+      const days = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${v} days`);
+      const pct = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${v}%`);
+      return {
+        title: REPORTS[key],
+        description:
+          "Turnaround and compliance measures for your jurisdiction. Verification and flag-ageing figures use the last 90 days; “—” means there is no sample yet.",
+        columns: [
+          { key: "metric", label: "Measure" },
+          { key: "value", label: "Value" },
+        ],
+        rows: [
+          { metric: "Average submission → verification", value: hours(s.avg_verification_hours) },
+          { metric: "Submission → verification, 90th percentile", value: hours(s.p90_verification_hours) },
+          { metric: "Renewal compliance (renewed ÷ renewed + lapsed)", value: pct(s.renewal_compliance_pct) },
+          { metric: "Open discrepancy flag, median age", value: days(s.open_flag_p50_days) },
+          { metric: "Open discrepancy flag, 90th percentile age", value: days(s.open_flag_p90_days) },
+          { metric: "Deposits held", value: s.held_count ?? 0 },
+          { metric: "Matured without renewal", value: s.expired ?? 0 },
+          { metric: "Pending verification", value: s.pending_verification ?? 0 },
+        ],
       };
     }
     case "deposits": {

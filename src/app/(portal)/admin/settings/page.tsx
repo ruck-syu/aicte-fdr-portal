@@ -58,6 +58,46 @@ export default async function SettingsPage() {
             </Field>
           </div>
         </Card>
+        <Card title="Refund & penalty policy" description="Used by the release quote: interest accrued from the issue date, and a penalty when a deposit is released before the minimum holding period.">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Field label="Minimum holding (years)" htmlFor="min_holding_years" hint="Releasing earlier attracts the penalty below">
+              <input
+                id="min_holding_years"
+                name="min_holding_years"
+                type="number"
+                min={0}
+                max={50}
+                step={1}
+                defaultValue={s.min_holding_years}
+                className="input"
+              />
+            </Field>
+            <Field label="Early-release penalty (%)" htmlFor="early_release_penalty_pct" hint="Percent of the principal deducted">
+              <input
+                id="early_release_penalty_pct"
+                name="early_release_penalty_pct"
+                type="number"
+                min={0}
+                max={100}
+                step="0.01"
+                defaultValue={s.early_release_penalty_pct}
+                className="input"
+              />
+            </Field>
+            <Field label="Default interest rate (% p.a.)" htmlFor="default_interest_rate" hint="Used when the deposit has no rate of its own">
+              <input
+                id="default_interest_rate"
+                name="default_interest_rate"
+                type="number"
+                min={0}
+                max={50}
+                step="0.01"
+                defaultValue={s.default_interest_rate}
+                className="input"
+              />
+            </Field>
+          </div>
+        </Card>
         <Card title="Mandatory documents for a deposit" description="A deposit cannot be submitted for verification without these.">
           <DocChecklist name="required_documents" selected={s.required_documents} />
         </Card>
