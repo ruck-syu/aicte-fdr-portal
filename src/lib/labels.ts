@@ -95,6 +95,7 @@ export const DOCUMENT_LABELS: Record<DocumentType, string> = {
 export const RELEASE_STATUS_LABELS: Record<ReleaseStatus, string> = {
   draft: "Draft",
   submitted: "Under review",
+  pending_second_approval: "Second approval due",
   approved: "Approved",
   rejected: "Rejected",
   withdrawn: "Withdrawn",

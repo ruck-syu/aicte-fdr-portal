@@ -36,7 +36,19 @@ export async function decideRelease(_: ActionState, formData: FormData): Promise
   });
   if (error) return { error: friendlyError(error) };
   refresh();
-  return { ok: decision === "approve" ? "Release approved and the NOC reference recorded." : "Release rejected." };
+  if (decision === "reject") return { ok: "Release rejected." };
+  // Above the threshold an approval only records the first signature.
+  const { data } = await supabase
+    .from("release_requests")
+    .select("status")
+    .eq("id", String(formData.get("id")))
+    .maybeSingle();
+  return {
+    ok:
+      data?.status === "pending_second_approval"
+        ? "First approval recorded. A second signature from an AICTE verifier is required before the deposit is released."
+        : "Release approved and the NOC reference recorded.",
+  };
 }
 
 /** Grievance / Vigilance / PGRC sign-off on a submitted release. */

@@ -28,7 +28,13 @@ export type DocumentType =
   | "clearance_certificate"
   | "release_letter"
   | "other";
-export type ReleaseStatus = "draft" | "submitted" | "approved" | "rejected" | "withdrawn";
+export type ReleaseStatus =
+  | "draft"
+  | "submitted"
+  | "pending_second_approval"
+  | "approved"
+  | "rejected"
+  | "withdrawn";
 export type ClearanceCell = "grievance" | "vigilance" | "pgrc";
 export type ClearanceStatus = "pending" | "cleared" | "blocked";
 export type ReleaseReason =
@@ -183,6 +189,10 @@ export interface ReleaseRequest {
   decision_note: string | null;
   /** NOC reference recorded on approval. */
   noc_reference: string | null;
+  /** First signature when the amount crosses the two-step threshold. */
+  first_approved_by: string | null;
+  first_approved_at: string | null;
+  first_approved_note: string | null;
   /** Frozen at approval; null while the request is undecided. */
   quote: ReleaseQuote | null;
   sanctioned_amount: number | null;
@@ -304,6 +314,8 @@ export interface AppSettings {
   min_holding_years: number;
   early_release_penalty_pct: number;
   default_interest_rate: number;
+  /** Net payable at or above this amount needs a second signature. */
+  release_second_approval_threshold: number;
 }
 
 export interface DashboardStats {
@@ -317,6 +329,7 @@ export interface DashboardStats {
   returned: number;
   drafts: number;
   release_pending: number;
+  release_second_approval: number;
   released_value: number;
   open_demands: number;
   overdue_demands: number;

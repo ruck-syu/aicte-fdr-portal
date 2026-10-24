@@ -24,7 +24,7 @@ This document lists only changes **worth implementing**, ordered by demo/complia
 | G7 | ✅ PDF export + print stylesheet | **P1** | 1 d | §2.2 reporting |
 | G8 | ✅ Region heatmap (region × status) | **P1** | 0.5–1 d | §2.2 analytics |
 | G9 | Read-only Auditor role | **P1** | 0.5 d | §3 roles |
-| G10 | Amount-threshold second approval for releases | **P1** | 1 d | §2.3 dynamic approvals |
+| G10 | ✅ Amount-threshold second approval for releases | **P1** | 1 d | §2.3 dynamic approvals |
 | G11 | MFA (TOTP) for officials | **P1** | 1 d | §4 security |
 | G12 | Bulk / drag-drop document upload | **P2** | 0.5–1 d | §2.2 documents |
 | G13 | Retention & archival policy + export job | **P2** | 1–2 d | §4 retention |
@@ -231,13 +231,15 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 
 **Acceptance.** Auditor can read deposits, documents, reports, audit; every write RPC raises. **Effort.** 0.5 day.
 
-### G10. Amount-threshold second approval for releases — open
+### ✅ G10. Amount-threshold second approval for releases — shipped
 
 **Why.** Spec's "Dynamic Role-Based Approvals": above a threshold, a higher authority must approve (§2.3).
 
 **Change.** `app_settings.release_second_approval_threshold numeric default 1000000`; add `pending_second_approval` to `release_status`; first approval by a reviewer, second by `aicte_verifier`/admin; both recorded with notes. Show the required approver level on the release page.
 
 **Acceptance.** Releases ≥ threshold cannot reach `approved` on one signature; below threshold unchanged; both signatures audited. **Effort.** 1 day.
+
+**Shipped 2026-10-24.** `20261024000000_second_approval_status.sql` adds `pending_second_approval` on its own (a new enum value cannot be used in the transaction that creates it) and `20261024000001_second_approval.sql` adds the settings threshold (default ₹10,00,000, editable under **Admin → Settings**), `release_requests.first_approved_by / _at / _note`, and a two-stage `decide_release()`: at or above the threshold the first approval parks the request with its NOC and refund quote frozen, and the second must come from an `aicte_verifier` or administrator who is not the officer who signed first, with a recorded note. The release page shows who approved first, what is still required, and only offers **Give second approval** to an eligible, different officer; the list badges the status and its waiting time, the pending-releases report includes both stages, and `dashboard_stats()` counts parked releases in `release_pending` with a separate `release_second_approval`. `db:verify` asserts the below-threshold single-signature path, the first-signature park, rejection of a regional officer and of the same officer, the required note, the frozen quote surviving the second signature, the release itself, and both status-change audit rows.
 
 ### G11. MFA (TOTP) for officials — open
 
@@ -342,7 +344,7 @@ Ship P0 before any judging round; treat P1 as the "completeness" story.
 | Spec area | Status | Gap |
 |---|---|---|
 | ✅ §2.1 repository | Built | — |
-| ✅ §2.1 workflow | Built (3-cell clearance + NOC) | G10 |
+| ✅ §2.1 workflow | Built (3-cell clearance + NOC + threshold approval) | — (G10 done) |
 | §2.1 secure documents | Partial (e-sign) | G12; eSign deferred |
 | ✅ §2.1 audit | Built (non-blockchain) | — (QW1 done) |
 | §2.1 RBAC | Partial | G9 |
@@ -355,7 +357,7 @@ Ship P0 before any judging round; treat P1 as the "completeness" story.
 | §2.3 OCR/ML | Missing | Deferred |
 | §2.3 blockchain | Missing | Deferred (hash anchor option) |
 | §2.3 smart escalation | Partial (ageing visible) | G4 (auto-escalation) |
-| §2.3 dynamic approvals | Missing | G10 |
+| ✅ §2.3 dynamic approvals | Built (two signatures at or above the threshold) | — (G10 done) |
 | §2.3 mobile/chatbot | Partial | Deferred |
 | §2.3 eSign | Missing | Deferred |
 | ✅ §2.3 refund calculator | Built (stored sanction) | — (G2 done) |

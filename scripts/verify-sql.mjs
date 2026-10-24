@@ -338,6 +338,64 @@ assert.equal((await one(`select status, noc_reference, decided_by from release_r
 assert.equal((await one(`select status from deposits where id = $1`, [ovDep])).status, "released");
 ok("clearance override: administrator approval of a blocked cell recorded with a note + NOC");
 
+// --- two-step approval above the threshold (G10) -----------------------------
+// The default threshold is ₹10,00,000. Every release above is below it and was
+// decided by a single signature; this deposit is not.
+assert.equal((await one(`select first_approved_by from release_requests where id = $1`, [rr])).first_approved_by, null);
+
+const bigDep = (await one(`insert into deposits
+  (institution_id, instrument_number, bank_name, amount, issue_date, maturity_date, status, verified_at)
+  values ($1, 'FDR-SECOND', 'Punjab National Bank', 2500000, current_date - 400, current_date + 900, 'verified', now())
+  returning id`, [instA])).id;
+const bigRr = (await as(userA, () => one(`select create_release_request($1, 'course_closure', 'Programme closed') as id`, [bigDep]))).id;
+for (const t of ["release_letter", "affidavit"]) {
+  await as(userA, () => q(`insert into deposit_documents (release_request_id, doc_type, storage_path, file_name, institution_id)
+    values ($1, $2, $3, 'f.pdf', $4)`, [bigRr, t, `${instA}/releases/${bigRr}/${t}.pdf`, instA]));
+}
+await as(userA, () => q(`select submit_release_request($1)`, [bigRr]));
+for (const [who, cell] of [[grievance, "grievance"], [vigilance, "vigilance"], [pgrc, "pgrc"]]) {
+  await as(who, () => q(`select record_clearance($1, $2, 'cleared')`, [bigRr, cell]));
+}
+
+// first signature: the request parks, with the NOC and quote already frozen
+await as(verifier, () => q(`select decide_release($1, 'approve', 'First-level sanction', 'NOC/AICTE/2026/010')`, [bigRr]));
+const first = await one(`select status, first_approved_by, first_approved_at, first_approved_note,
+  decided_by, decided_at, sanctioned_amount, noc_reference, quote
+  from release_requests where id = $1`, [bigRr]);
+assert.equal(first.status, "pending_second_approval");
+assert.equal(first.first_approved_by, verifier);
+assert.equal(first.first_approved_note, "First-level sanction");
+assert.ok(first.first_approved_at);
+assert.equal(first.decided_by, null);
+assert.equal(first.decided_at, null);
+assert.equal(first.sanctioned_amount, null);
+assert.equal(first.noc_reference, "NOC/AICTE/2026/010");
+assert.ok(Number(first.quote.net_payable) >= 1000000);
+assert.equal((await one(`select status from deposits where id = $1`, [bigDep])).status, "release_requested");
+
+// a regional officer cannot sign second, an officer cannot sign twice, and the
+// second signature requires a note
+await as(roNorth, () => fails(q(`select decide_release($1, 'approve', 'Second approval')`, [bigRr]), /AICTE verifier/));
+await as(verifier, () => fails(q(`select decide_release($1, 'approve', 'Second approval')`, [bigRr]), /cannot also give the second/));
+await as(admin, () => fails(q(`select decide_release($1, 'approve')`, [bigRr]), /note is required/));
+
+await as(admin, () => q(`select decide_release($1, 'approve', 'Board note: amount and NOC verified')`, [bigRr]));
+const second = await one(`select status, decided_by, sanctioned_amount, noc_reference, first_approved_by
+  from release_requests where id = $1`, [bigRr]);
+assert.equal(second.status, "approved");
+assert.equal(second.decided_by, admin);
+assert.equal(second.first_approved_by, verifier);
+assert.equal(Number(second.sanctioned_amount), Number(first.quote.net_payable));
+assert.equal(second.noc_reference, "NOC/AICTE/2026/010");
+assert.equal((await one(`select status from deposits where id = $1`, [bigDep])).status, "released");
+
+const approvals = await q(`select changes->'status'->>'to' as to_status from audit_logs
+  where entity_type = 'release_requests' and entity_id = $1
+    and changes->'status'->>'to' in ('pending_second_approval', 'approved')
+  order by id`, [bigRr]);
+assert.deepEqual(approvals.map((a) => a.to_status), ["pending_second_approval", "approved"]);
+ok("second approval: above the threshold the first signature parks the release, a different verifier signs second, quote frozen");
+
 // --- refund / penalty quote (G2) ---------------------------------------------
 const quoteDep = (await as(userA, () => one(`insert into deposits
   (institution_id, instrument_number, bank_name, amount, interest_rate, issue_date, maturity_date)
@@ -445,7 +503,7 @@ const roSwView = await as(roSouthWest, () => q(`select id from deposit_overview`
 assert.equal(roSwView.length, 0);
 const stats = await as(verifier, () => one(`select dashboard_stats() as s`));
 assert.equal(stats.s.held_count, 1);
-assert.equal(stats.s.released_value, 800000); // main release + administrator override
+assert.equal(stats.s.released_value, 3300000); // main + administrator override + above-threshold release
 const statsB = await as(userB, () => one(`select dashboard_stats() as s`));
 assert.equal(statsB.s.released_value, 0);
 ok("dashboard stats and overview views respect scope");

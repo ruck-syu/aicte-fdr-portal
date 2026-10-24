@@ -170,20 +170,23 @@ export async function runReport(supabase: SupabaseClient, key: ReportKey, params
       };
     }
     case "pending-releases": {
+      // Everything undecided, including releases parked for a second signature.
       const { data } = await supabase
         .from("release_overview")
         .select("*")
-        .eq("status", "submitted")
+        .in("status", ["submitted", "pending_second_approval"])
         .order("submitted_at");
       return {
         title: REPORTS[key],
-        description: "Release / refund applications submitted and awaiting an officer's decision.",
+        description:
+          "Release / refund applications awaiting a first or second decision, oldest first.",
         columns: [
           { key: "reference_no", label: "Request" },
           { key: "institution", label: "Institution" },
           { key: "deposit", label: "Deposit" },
           { key: "amount", label: "Amount (₹)", numeric: true, money: true },
           { key: "reason", label: "Reason" },
+          { key: "stage", label: "Stage" },
           { key: "submitted", label: "Submitted" },
         ],
         rows: ((data ?? []) as ReleaseOverview[]).map((r) => ({
@@ -193,6 +196,7 @@ export async function runReport(supabase: SupabaseClient, key: ReportKey, params
           deposit: r.deposit_reference_no,
           amount: Number(r.amount),
           reason: RELEASE_REASON_LABELS[r.reason],
+          stage: RELEASE_STATUS_LABELS[r.status],
           submitted: r.submitted_at?.slice(0, 10) ?? null,
         })),
       };

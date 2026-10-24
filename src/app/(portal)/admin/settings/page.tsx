@@ -98,6 +98,28 @@ export default async function SettingsPage() {
             </Field>
           </div>
         </Card>
+        <Card
+          title="Release approvals"
+          description="A release whose net payable reaches this amount needs a second signature — from an AICTE verifier or an administrator, and never from the officer who approved first."
+        >
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="Second-approval threshold (₹)"
+              htmlFor="release_second_approval_threshold"
+              hint="Set 0 to require two signatures on every release"
+            >
+              <input
+                id="release_second_approval_threshold"
+                name="release_second_approval_threshold"
+                type="number"
+                min={0}
+                step="0.01"
+                defaultValue={s.release_second_approval_threshold}
+                className="input"
+              />
+            </Field>
+          </div>
+        </Card>
         <Card title="Mandatory documents for a deposit" description="A deposit cannot be submitted for verification without these.">
           <DocChecklist name="required_documents" selected={s.required_documents} />
         </Card>

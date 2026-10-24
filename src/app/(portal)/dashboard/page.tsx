@@ -170,7 +170,8 @@ export default async function DashboardPage() {
         <Stat
           label="Release requests under review"
           value={s.release_pending ?? 0}
-          href="/releases?status=submitted"
+          hint={s.release_second_approval ? `${s.release_second_approval} awaiting a second approval` : undefined}
+          href="/releases"
         />
         <Stat label="Released to date" value={formatINRCompact(s.released_value ?? 0)} href="/deposits?status=released" />
       </div>

@@ -222,6 +222,9 @@ export default async function ReleasesPage({ searchParams }: PageProps<"/release
                     </td>
                     <td>
                       <ReleaseStatusBadge status={r.status} />
+                      {r.status === "pending_second_approval" && (
+                        <AgeBadge since={r.first_approved_at} label="Waiting" className="mt-1" />
+                      )}
                       {(() => {
                         const p = progress.get(r.id);
                         if (!p?.total) return null;

@@ -70,7 +70,7 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
     supabase
       .from("profiles")
       .select("id, full_name, email")
-      .in("id", [r.requested_by, r.decided_by].filter(Boolean) as string[]),
+      .in("id", [r.requested_by, r.decided_by, r.first_approved_by].filter(Boolean) as string[]),
     supabase.rpc("release_quote", { p_deposit: r.deposit_id }),
     official
       ? supabase
@@ -96,6 +96,16 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
   // An administrator may override a block (with a note), never a missing sign-off.
   const canApprove = clearedCount === cells.length || (user.role === "admin" && allDecided);
   const awaiting = cells.filter((c) => clearanceByCell.get(c)?.status !== "cleared");
+  // Above the threshold a reviewer's approval is only the first of two; the
+  // second must come from a different, more senior officer.
+  const threshold = Number(settings?.release_second_approval_threshold ?? 1000000);
+  const secondApprovalDue = r.status === "pending_second_approval";
+  const twoStep =
+    secondApprovalDue ||
+    !!r.first_approved_by ||
+    (r.status === "submitted" && (breakdown?.net_payable ?? r.amount) >= threshold);
+  const canSecondApprove = user.role === "aicte_verifier" || user.role === "admin";
+  const firstApprover = r.first_approved_by ? people.get(r.first_approved_by) : undefined;
 
   const isOwner = user.role === "institute_user" && user.institution_id === r.institution_id;
   const required = settings?.release_required_documents ?? (["release_letter", "affidavit"] as DocumentType[]);
@@ -103,6 +113,22 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
   const docTypes: DocumentType[] = [
     ...required,
     ...(["clearance_certificate", "fdr_scan", "other"] as DocumentType[]).filter((t) => !required.includes(t)),
+  ];
+  const workflow: [string, boolean][] = [
+    ["Draft prepared", true],
+    ["Documents uploaded", missing.length === 0],
+    ["Submitted for approval", !!r.submitted_at],
+    [`Clearances (${clearedCount}/3)`, clearedCount === 3],
+    ...(twoStep
+      ? ([
+          [`First approval${firstApprover ? ` — ${displayName(firstApprover)}` : ""}`, !!r.first_approved_at],
+          ["Second approval (verifier)", r.status === "approved"],
+        ] as [string, boolean][])
+      : []),
+    [
+      r.status === "rejected" ? "Rejected" : r.status === "withdrawn" ? "Withdrawn" : "Approved & released",
+      ["approved", "rejected", "withdrawn"].includes(r.status),
+    ],
   ];
 
   return (
@@ -156,11 +182,31 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
           </Alert>
         </div>
       )}
+      {secondApprovalDue && (
+        <div className="mb-4">
+          <Alert tone="amber" title="First approval recorded — a second signature is required">
+            {displayName(firstApprover)} approved {formatDateTime(r.first_approved_at)}. The net payable is at or above{" "}
+            {formatINR(threshold)}, so an AICTE verifier or an administrator must sign again before the deposit is
+            released. The NOC reference and refund quote are already frozen.
+          </Alert>
+        </div>
+      )}
       {r.status === "approved" && (
         <div className="mb-4">
           <Alert tone="green" title="Release approved">
-            Approved {formatDateTime(r.decided_at)} by {displayName(people.get(r.decided_by ?? ""))}. The deposit is
-            recorded as released{r.sanctioned_amount !== null ? ` and ${formatINR(r.sanctioned_amount)} sanctioned` : ""}
+            {r.first_approved_by ? (
+              <>
+                First approved {formatDateTime(r.first_approved_at)} by {displayName(firstApprover)}, then sanctioned{" "}
+                {formatDateTime(r.decided_at)} by {displayName(people.get(r.decided_by ?? ""))}. The deposit is recorded
+                as released
+              </>
+            ) : (
+              <>
+                Approved {formatDateTime(r.decided_at)} by {displayName(people.get(r.decided_by ?? ""))}. The deposit is
+                recorded as released
+              </>
+            )}
+            {r.sanctioned_amount !== null ? ` and ${formatINR(r.sanctioned_amount)} sanctioned` : ""}
             {r.noc_reference ? ` under NOC ${r.noc_reference}` : ""}.
           </Alert>
         </div>
@@ -190,6 +236,15 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
                       { label: "Decided", value: `${formatDateTime(r.decided_at)} by ${displayName(people.get(r.decided_by ?? ""))}` },
                       { label: "Decision note", value: r.decision_note, wide: true },
                       ...(r.noc_reference ? [{ label: "NOC reference", value: r.noc_reference }] : []),
+                    ]
+                  : []),
+                ...(r.first_approved_at
+                  ? [
+                      {
+                        label: "First approval",
+                        value: `${formatDateTime(r.first_approved_at)} by ${displayName(firstApprover)}`,
+                      },
+                      { label: "First approval note", value: r.first_approved_note, wide: true },
                     ]
                   : []),
               ]}
@@ -368,47 +423,96 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
               </EmptyState>
             )}
           </Card>
-          {official && r.status === "submitted" && (
-            <Card title="Decision" className="border-brand-200 ring-1 ring-brand-100">
+          {official && (r.status === "submitted" || secondApprovalDue) && (
+            <Card
+              title={secondApprovalDue ? "Second approval" : "Decision"}
+              description={
+                secondApprovalDue
+                  ? `First signature on record. Because the net payable is at least ${formatINR(threshold)}, a second signature is required.`
+                  : twoStep
+                    ? `At or above ${formatINR(threshold)} this approval is the first of two; an AICTE verifier signs second.`
+                    : undefined
+              }
+              className="border-brand-200 ring-1 ring-brand-100"
+            >
               <ActionForm action={decideRelease} className="space-y-3">
                 <input type="hidden" name="id" value={r.id} />
-                <ul className="space-y-1 text-sm text-slate-600">
-                  {required.map((t) => (
-                    <li key={t}>
-                      {docs.some((x) => x.is_current && x.doc_type === t) ? "✓" : "✗"} {DOCUMENT_LABELS[t]}
+                {!secondApprovalDue && (
+                  <ul className="space-y-1 text-sm text-slate-600">
+                    {required.map((t) => (
+                      <li key={t}>
+                        {docs.some((x) => x.is_current && x.doc_type === t) ? "✓" : "✗"} {DOCUMENT_LABELS[t]}
+                      </li>
+                    ))}
+                    <li className={clearedCount === 3 ? "" : "text-slate-500"}>
+                      {clearedCount === 3 ? "✓" : "✗"} Clearances ({clearedCount}/3)
                     </li>
-                  ))}
-                  <li className={clearedCount === 3 ? "" : "text-slate-500"}>
-                    {clearedCount === 3 ? "✓" : "✗"} Clearances ({clearedCount}/3)
-                  </li>
-                </ul>
-                <label className="block">
-                  <span className="mb-1 block text-sm font-medium text-slate-700">NOC reference</span>
-                  <input name="noc_reference" className="input" placeholder="e.g. NOC/AICTE/2026/001" />
-                  <span className="mt-1 block text-xs text-slate-500">Required to approve; stored on the release.</span>
-                </label>
+                  </ul>
+                )}
+                {secondApprovalDue ? (
+                  <div className="rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                    NOC <span className="font-medium text-slate-800">{r.noc_reference ?? "—"}</span> · first approved by{" "}
+                    {displayName(firstApprover)} on {formatDateTime(r.first_approved_at)}
+                  </div>
+                ) : (
+                  <label className="block">
+                    <span className="mb-1 block text-sm font-medium text-slate-700">NOC reference</span>
+                    <input name="noc_reference" className="input" placeholder="e.g. NOC/AICTE/2026/001" />
+                    <span className="mt-1 block text-xs text-slate-500">Required to approve; stored on the release.</span>
+                  </label>
+                )}
                 <textarea
                   name="note"
                   rows={3}
                   className="input"
-                  placeholder="Decision note (required to reject, or for an administrator override)"
+                  placeholder={
+                    secondApprovalDue
+                      ? "Note for the second approval (required)"
+                      : "Decision note (required to reject, or for an administrator override)"
+                  }
                 />
                 <div className="flex flex-wrap gap-2">
-                  {canApprove && (
-                    <SubmitButton
-                      name="decision"
-                      value="approve"
-                      variant="success"
-                      confirm="Approve release? The deposit will be marked as released."
-                    >
-                      Approve release
-                    </SubmitButton>
-                  )}
+                  {secondApprovalDue
+                    ? canSecondApprove &&
+                      user.id !== r.first_approved_by && (
+                        <SubmitButton
+                          name="decision"
+                          value="approve"
+                          variant="success"
+                          confirm="Record the second approval? The deposit will be marked as released."
+                        >
+                          Give second approval
+                        </SubmitButton>
+                      )
+                    : canApprove && (
+                        <SubmitButton
+                          name="decision"
+                          value="approve"
+                          variant="success"
+                          confirm={
+                            twoStep
+                              ? "Approve at first level? A second signature will still be required."
+                              : "Approve release? The deposit will be marked as released."
+                          }
+                        >
+                          {twoStep ? "Approve — send for second approval" : "Approve release"}
+                        </SubmitButton>
+                      )}
                   <SubmitButton name="decision" value="reject" variant="danger">
                     Reject
                   </SubmitButton>
                 </div>
-                {!canApprove && (
+                {secondApprovalDue && !canSecondApprove && (
+                  <p className="text-xs text-amber-700">
+                    Waiting on an AICTE verifier or an administrator for the second signature.
+                  </p>
+                )}
+                {secondApprovalDue && canSecondApprove && user.id === r.first_approved_by && (
+                  <p className="text-xs text-amber-700">
+                    You recorded the first approval; a different officer must sign second.
+                  </p>
+                )}
+                {!secondApprovalDue && !canApprove && (
                   <p className="text-xs text-amber-700">
                     Awaiting {awaiting.map((c) => CLEARANCE_CELL_LABELS[c]).join(", ")}. Approval unlocks once every cell has
                     cleared.
@@ -419,23 +523,14 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
           )}
           <Card title="Workflow">
             <ol className="space-y-3 text-sm">
-              {[
-                ["Draft prepared", true],
-                ["Documents uploaded", missing.length === 0],
-                ["Submitted for approval", !!r.submitted_at],
-                [`Clearances (${clearedCount}/3)`, clearedCount === 3],
-                [
-                  r.status === "rejected" ? "Rejected" : r.status === "withdrawn" ? "Withdrawn" : "Approved & released",
-                  ["approved", "rejected", "withdrawn"].includes(r.status),
-                ],
-              ].map(([label, done]) => (
-                <li key={label as string} className="flex items-center gap-2.5">
+              {workflow.map(([label, done]) => (
+                <li key={label} className="flex items-center gap-2.5">
                   <span
                     className={`grid size-5 place-items-center rounded-full text-[11px] ${done ? "bg-brand-600 text-white" : "bg-slate-200 text-slate-500"}`}
                   >
                     {done ? "✓" : ""}
                   </span>
-                  <span className={done ? "text-slate-900" : "text-slate-500"}>{label as string}</span>
+                  <span className={done ? "text-slate-900" : "text-slate-500"}>{label}</span>
                 </li>
               ))}
             </ol>

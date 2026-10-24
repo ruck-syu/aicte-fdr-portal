@@ -37,7 +37,8 @@ export default async function InstitutionPage({ params }: PageProps<"/institutio
     if (table === "deposits" && status === "lapsed") q = q.eq("validity", "expired");
     if (table === "deposits" && status === "pending") q = q.eq("status", "submitted");
     if (table === "demands") q = q.eq("status", "open");
-    if (table === "releases") q = q.eq("status", "submitted");
+    // Undecided includes releases parked for a second signature.
+    if (table === "releases") q = q.in("status", ["submitted", "pending_second_approval"]);
     return q;
   };
 

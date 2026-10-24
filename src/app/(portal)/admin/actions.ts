@@ -229,6 +229,7 @@ export async function saveSettings(_: ActionState, formData: FormData): Promise<
       min_holding_years: z.coerce.number().int().min(0).max(50),
       early_release_penalty_pct: z.coerce.number().min(0).max(100),
       default_interest_rate: z.coerce.number().min(0).max(50),
+      release_second_approval_threshold: z.coerce.number().min(0).max(1e12),
       required_documents: z.array(z.enum(docTypes)),
       release_required_documents: z.array(z.enum(docTypes)),
     })
@@ -239,6 +240,7 @@ export async function saveSettings(_: ActionState, formData: FormData): Promise<
       min_holding_years: formData.get("min_holding_years"),
       early_release_penalty_pct: formData.get("early_release_penalty_pct"),
       default_interest_rate: formData.get("default_interest_rate"),
+      release_second_approval_threshold: formData.get("release_second_approval_threshold"),
       required_documents: formData.getAll("required_documents"),
       release_required_documents: formData.getAll("release_required_documents"),
     });
