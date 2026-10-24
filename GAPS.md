@@ -273,6 +273,20 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 | QW3 | Trigram indexes | `create extension if not exists pg_trgm; create index ... using gin (institution_name gin_trgm_ops)` on the overview source columns backing ILIKE search. |
 | QW4 | Demo-mode docs | Document `NEXT_PUBLIC_DEMO_MODE=true` in `.env.example` so the login page demo hints appear for reviewers. |
 
+### Shipped 2026-10-24 (no schema change)
+
+Work that needed no migration, delivered on top of the existing views, RPCs and RLS:
+
+- per-record institution profile (`/institutions/[id]`) with counts and latest rows from all three registers, linked from the deposit and release lists, search and **Admin → Institutions**;
+- global search in the sidebar (`/search`) with a `/` keyboard shortcut;
+- sortable deposit and release registers whose order flows into the CSV and the printed page;
+- filtered total value and match count on the deposit register (lower bound past 1,000 rows);
+- CSV exports for the release and demand registers, alongside the existing deposit export;
+- print / Save as PDF on the deposit, release and demand lists, with page number and filters in the printed header;
+- severity filters on the alert feed with an unread-critical count;
+- the latest audit entries on the dashboard and date presets on `/audit`;
+- portal error boundary, inside-shell and outside-shell 404 pages, and table-shaped loading states on every list route.
+
 ---
 
 ## 6. Explicitly deferred (and why)
@@ -332,9 +346,9 @@ Ship P0 before any judging round; treat P1 as the "completeness" story.
 | §2.1 RBAC | Partial | G9 |
 | §2.2 dashboard | Built | G4 |
 | §2.2 document mgmt | Partial | G12 |
-| §2.2 search/filter | Built (global search + ILIKE) | QW3 |
+| §2.2 search/filter | Built (global search, institution profile, ILIKE) | QW3 |
 | §2.2 alerts | Partial (no SMS, no auto-escalation) | G14 |
-| §2.2 reporting | Built (CSV + print/PDF + audit CSV) | — |
+| §2.2 reporting | Built (CSV on every register + print/PDF) | — |
 | §2.3 bank API | Built (mock adapter + evidence) | — (G3 done) |
 | §2.3 OCR/ML | Missing | Deferred |
 | §2.3 blockchain | Missing | Deferred (hash anchor option) |

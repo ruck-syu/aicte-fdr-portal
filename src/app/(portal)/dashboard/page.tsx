@@ -3,9 +3,10 @@ import Link from "next/link";
 import { Plus } from "lucide-react";
 import { requireUser, isOfficial } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { formatDate, formatINR, formatINRCompact, daysLabel } from "@/lib/format";
+import { formatDate, formatDateTime, formatINR, formatINRCompact, daysLabel } from "@/lib/format";
 import { INSTRUMENT_SHORT, REGION_LABELS, ROLE_LABELS } from "@/lib/labels";
-import type { DashboardStats, DemandOverview, DepositOverview, DepositStatus, Region } from "@/lib/types";
+import { describeAudit, ENTITY_LABELS, ACTION_LABELS } from "@/lib/audit";
+import type { AuditLog, DashboardStats, DemandOverview, DepositOverview, DepositStatus, Region } from "@/lib/types";
 import { Card, DescriptionList, EmptyState, LinkButton, PageHeader, Stat } from "@/components/ui";
 import { AgeBadge, DemandStatusBadge, StatusBadge, ValidityBadge } from "@/components/badges";
 import { MaturityChart } from "@/components/maturity-chart";
@@ -18,7 +19,7 @@ export default async function DashboardPage() {
   const official = isOfficial(user.role);
   const supabase = await createClient();
 
-  const [statsRes, upcomingRes, queueRes, demandsRes] = await Promise.all([
+  const [statsRes, upcomingRes, queueRes, demandsRes, activityRes] = await Promise.all([
     supabase.rpc("dashboard_stats"),
     supabase
       .from("deposit_overview")
@@ -45,6 +46,9 @@ export default async function DashboardPage() {
       .eq("status", "open")
       .order("due_date")
       .limit(6),
+    official
+      ? supabase.from("audit_logs").select("*").order("occurred_at", { ascending: false }).limit(8)
+      : Promise.resolve({ data: [] }),
   ]);
 
   // Region × status is a cross-tab, and there is no rollup function for it.
@@ -82,6 +86,7 @@ export default async function DashboardPage() {
   const upcoming = (upcomingRes.data ?? []) as DepositOverview[];
   const queue = (queueRes.data ?? []) as DepositOverview[];
   const demands = (demandsRes.data ?? []) as DemandOverview[];
+  const activity = (activityRes.data ?? []) as AuditLog[];
 
   const hours = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${v} h`);
   const days = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${v} days`);
@@ -338,6 +343,46 @@ export default async function DashboardPage() {
           )}
         </Card>
       </div>
+
+      {official && (
+        <Card
+          className="mt-6"
+          title="Recent activity"
+          description="Every change in your scope, newest first"
+          actions={
+            <Link href="/audit" className="text-xs font-medium text-brand-700 hover:underline">
+              View audit trail
+            </Link>
+          }
+          bodyClassName="p-0"
+        >
+          {activity.length ? (
+            <ul className="divide-y divide-slate-100">
+              {activity.map((a) => (
+                <li key={a.id} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-5 py-2.5">
+                  <div className="min-w-0 text-sm text-slate-800">
+                    {a.deposit_id ? (
+                      <Link href={`/deposits/${a.deposit_id}`} className="hover:text-brand-700 hover:underline">
+                        {describeAudit(a)}
+                      </Link>
+                    ) : (
+                      describeAudit(a)
+                    )}
+                    <span className="ml-2 text-xs text-slate-500">
+                      {ENTITY_LABELS[a.entity_type] ?? a.entity_type} · {ACTION_LABELS[a.action] ?? a.action}
+                    </span>
+                  </div>
+                  <div className="text-xs whitespace-nowrap text-slate-500">
+                    {a.actor_email ?? "System"} · {formatDateTime(a.occurred_at)}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <EmptyState title="No activity yet" />
+          )}
+        </Card>
+      )}
     </>
   );
 }

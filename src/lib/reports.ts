@@ -1,16 +1,26 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { formatDate } from "./format";
-import { INSTRUMENT_SHORT, REGION_LABELS, RELEASE_REASON_LABELS, STATUS_LABELS, VALIDITY_LABELS } from "./labels";
+import {
+  DEMAND_STATUS_LABELS,
+  INSTRUMENT_SHORT,
+  REGION_LABELS,
+  RELEASE_REASON_LABELS,
+  RELEASE_STATUS_LABELS,
+  STATUS_LABELS,
+  VALIDITY_LABELS,
+} from "./labels";
 import { param, searchTerm } from "./query";
 import type {
   DashboardStats,
   DemandOverview,
+  DemandStatus,
   DepositOverview,
   DepositStatus,
   InstrumentType,
   Region,
   ReleaseOverview,
+  ReleaseStatus,
   Validity,
 } from "./types";
 
@@ -33,6 +43,8 @@ export const REPORTS = {
   "sanctioned-refunds": "Sanctioned refunds",
   kpis: "KPIs & service levels",
   deposits: "Full deposit register",
+  releases: "Full release register",
+  demands: "Full demand register",
 } as const;
 export type ReportKey = keyof typeof REPORTS;
 
@@ -264,7 +276,18 @@ export async function runReport(supabase: SupabaseClient, key: ReportKey, params
       if (validity in VALIDITY_LABELS) query = query.eq("validity", validity as Validity);
       if (region in REGION_LABELS) query = query.eq("region", region as Region);
       if (instrument in INSTRUMENT_SHORT) query = query.eq("instrument_type", instrument as InstrumentType);
-      const { data } = await query.order("institution_name").order("maturity_date").limit(10000);
+      // Follow the list page's column sort so the CSV matches what was on screen.
+      const sort = param(params.sort);
+      const dir = param(params.dir);
+      const fields: Record<string, string> = {
+        reference: "reference_no",
+        institution: "institution_name",
+        amount: "amount",
+        issue: "issue_date",
+        maturity: "maturity_date",
+      };
+      const ascending = dir === "asc" || dir === "desc" ? dir === "asc" : ["reference", "institution", "issue", "maturity"].includes(sort);
+      const { data } = await query.order(fields[sort] ?? "updated_at", { ascending }).limit(10000);
       return {
         title: REPORTS[key],
         description: "Every deposit in your jurisdiction matching the current filters.",
@@ -279,6 +302,149 @@ export async function runReport(supabase: SupabaseClient, key: ReportKey, params
           approval_case_id: d.approval_case_id,
           approval_valid_until: d.approval_valid_until,
           flags: d.open_flags,
+        })),
+      };
+    }
+    case "releases": {
+      // Same filters as the Releases list page, including a clearance officer's cell queue.
+      const q = searchTerm(params.q);
+      const status = param(params.status);
+      const awaiting = param(params.awaiting) === "me";
+      const { data: claims } = await supabase.auth.getClaims();
+      const { data: me } = await supabase
+        .from("profiles")
+        .select("role, clearance_cell")
+        .eq("id", claims?.claims?.sub ?? "")
+        .maybeSingle();
+      const cell = me?.role === "release_officer" ? (me.clearance_cell as string | null) : null;
+      let mine: string[] = [];
+      if (awaiting && cell) {
+        const { data: pending } = await supabase
+          .from("release_clearances")
+          .select("release_request_id")
+          .eq("cell", cell)
+          .eq("status", "pending");
+        mine = [...new Set(((pending ?? []) as { release_request_id: string }[]).map((c) => c.release_request_id))];
+      }
+
+      let query = supabase.from("release_overview").select("*");
+      if (q) {
+        query = query.or(
+          ["reference_no", "deposit_reference_no", "instrument_number", "institution_name", "institution_aicte_id"]
+            .map((c) => `${c}.ilike.*${q}*`)
+            .join(","),
+        );
+      }
+      if (awaiting && cell) {
+        query = query.eq("status", "submitted").in("id", mine.length ? mine : ["00000000-0000-0000-0000-000000000000"]);
+      } else if (status in RELEASE_STATUS_LABELS) {
+        query = query.eq("status", status as ReleaseStatus);
+      }
+
+      // Follow the list page's column sort.
+      const sort = param(params.sort);
+      const dir = param(params.dir);
+      const fields: Record<string, string> = { reference: "reference_no", amount: "amount", submitted: "submitted_at" };
+      const ascending = dir === "asc" || dir === "desc" ? dir === "asc" : ["reference", "submitted"].includes(sort);
+      const { data } = await query.order(fields[sort] ?? "created_at", { ascending }).limit(10000);
+      const releases = (data ?? []) as ReleaseOverview[];
+
+      // Clearance progress lives in its own table; fetch it for the exported page.
+      const progress = new Map<string, { cleared: number; total: number; blocked: number }>();
+      if (releases.length) {
+        const { data: clearances } = await supabase
+          .from("release_clearances")
+          .select("release_request_id, status")
+          .in("release_request_id", releases.map((r) => r.id));
+        for (const c of (clearances ?? []) as { release_request_id: string; status: string }[]) {
+          const p = progress.get(c.release_request_id) ?? { cleared: 0, total: 0, blocked: 0 };
+          p.total += 1;
+          if (c.status === "cleared") p.cleared += 1;
+          else if (c.status === "blocked") p.blocked += 1;
+          progress.set(c.release_request_id, p);
+        }
+      }
+
+      return {
+        title: REPORTS[key],
+        description: "Release and refund applications matching the current filters, with the clearances recorded on each.",
+        columns: [
+          { key: "reference_no", label: "Request" },
+          { key: "institution", label: "Institution" },
+          { key: "aicte_id", label: "AICTE ID" },
+          { key: "deposit", label: "Deposit" },
+          { key: "amount", label: "Amount (₹)", numeric: true, money: true },
+          { key: "reason", label: "Reason" },
+          { key: "status", label: "Status" },
+          { key: "clearances", label: "Clearances" },
+          { key: "submitted", label: "Submitted" },
+          { key: "decided", label: "Decided" },
+          { key: "noc", label: "NOC reference" },
+        ],
+        rows: releases.map((r) => {
+          const p = progress.get(r.id);
+          return {
+            _href: `/releases/${r.id}`,
+            reference_no: r.reference_no,
+            institution: r.institution_name,
+            aicte_id: r.institution_aicte_id,
+            deposit: r.deposit_reference_no,
+            amount: Number(r.amount),
+            reason: RELEASE_REASON_LABELS[r.reason],
+            status: RELEASE_STATUS_LABELS[r.status],
+            clearances: p ? `${p.cleared}/${p.total}${p.blocked ? " · blocked" : ""}` : "",
+            submitted: r.submitted_at?.slice(0, 10) ?? null,
+            decided: r.decided_at?.slice(0, 10) ?? null,
+            noc: r.noc_reference,
+          };
+        }),
+      };
+    }
+    case "demands": {
+      // Same filters as the Demands list page.
+      const q = searchTerm(params.q);
+      const status = param(params.status);
+      let query = supabase.from("demand_overview").select("*");
+      if (q) {
+        query = query.or(
+          ["reference_no", "approval_case_id", "program", "institution_name", "institution_aicte_id"]
+            .map((c) => `${c}.ilike.*${q}*`)
+            .join(","),
+        );
+      }
+      if (status === "overdue") query = query.eq("is_overdue", true);
+      else if (status in DEMAND_STATUS_LABELS) query = query.eq("status", status as DemandStatus);
+
+      const { data } = await query.order("status").order("due_date").limit(10000);
+      return {
+        title: REPORTS[key],
+        description: "Deposit demands matching the current filters, with what has been furnished against each.",
+        columns: [
+          { key: "reference_no", label: "Demand" },
+          { key: "institution", label: "Institution" },
+          { key: "aicte_id", label: "AICTE ID" },
+          { key: "region", label: "Region" },
+          { key: "approval_case_id", label: "Approval case" },
+          { key: "program", label: "Programme" },
+          { key: "required", label: "Required (₹)", numeric: true, money: true },
+          { key: "deposits_submitted", label: "Deposits furnished", numeric: true },
+          { key: "intimation_date", label: "Intimated" },
+          { key: "due_date", label: "Due date" },
+          { key: "status", label: "Status" },
+        ],
+        rows: ((data ?? []) as DemandOverview[]).map((m) => ({
+          _href: `/demands?q=${encodeURIComponent(m.reference_no)}`,
+          reference_no: m.reference_no,
+          institution: m.institution_name,
+          aicte_id: m.institution_aicte_id,
+          region: REGION_LABELS[m.region],
+          approval_case_id: m.approval_case_id,
+          program: m.program,
+          required: Number(m.required_amount),
+          deposits_submitted: m.deposits_submitted,
+          intimation_date: m.intimation_date,
+          due_date: m.due_date,
+          status: m.is_overdue ? "Overdue" : DEMAND_STATUS_LABELS[m.status],
         })),
       };
     }

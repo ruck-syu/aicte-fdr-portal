@@ -4,7 +4,7 @@ import { AlertOctagon, AlertTriangle, Info } from "lucide-react";
 import { requireUser, isOfficial } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTime } from "@/lib/format";
-import { param } from "@/lib/query";
+import { param, withParams } from "@/lib/query";
 import { Card, EmptyState, PageHeader, cx } from "@/components/ui";
 import { ActionForm, SubmitButton } from "@/components/action-form";
 import { markRead } from "./actions";
@@ -31,14 +31,25 @@ const ICONS = {
   critical: <AlertOctagon className="size-4 text-red-600" />,
 };
 
+const SEVERITY_TABS = [
+  ["", "All severities"],
+  ["critical", "Critical"],
+  ["warning", "Warning"],
+  ["info", "Info"],
+] as const;
+
 export default async function NotificationsPage({ searchParams }: PageProps<"/notifications">) {
   const params = await searchParams;
   const user = await requireUser();
   const unreadOnly = param(params.view) === "unread";
+  const severity = param(params.severity);
   const supabase = await createClient();
   const { data } = await supabase.rpc("notification_feed", { p_limit: 200, p_unread_only: unreadOnly });
   const items = (data ?? []) as FeedItem[];
   const unread = items.filter((n) => !n.is_read).length;
+  const severityFilter = SEVERITY_TABS.some(([v]) => v && v === severity) ? severity : "";
+  const visible = severityFilter ? items.filter((n) => n.severity === severityFilter) : items;
+  const critical = items.filter((n) => n.severity === "critical" && !n.is_read).length;
 
   return (
     <>
@@ -53,29 +64,64 @@ export default async function NotificationsPage({ searchParams }: PageProps<"/no
           )
         }
       />
-      <div className="mb-4 flex gap-1 text-sm">
-        {[
-          ["", "All"],
-          ["unread", "Unread"],
-        ].map(([v, l]) => (
-          <Link
-            key={v}
-            href={v ? `/notifications?view=${v}` : "/notifications"}
-            className={cx(
-              "rounded-md px-3 py-1.5",
-              (unreadOnly ? "unread" : "") === v ? "bg-white font-medium shadow-xs ring-1 ring-slate-200" : "text-slate-600 hover:bg-white",
-            )}
-          >
-            {l}
-          </Link>
-        ))}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 text-sm">
+        <div className="flex gap-1">
+          {[
+            ["", "All"],
+            ["unread", critical ? `Unread · ${critical} critical` : "Unread"],
+          ].map(([v, l]) => (
+            <Link
+              key={v}
+              href={`/notifications${withParams(params, { view: v, page: null })}`}
+              className={cx(
+                "rounded-md px-3 py-1.5",
+                (unreadOnly ? "unread" : "") === v
+                  ? "bg-white font-medium shadow-xs ring-1 ring-slate-200"
+                  : "text-slate-600 hover:bg-white",
+              )}
+            >
+              {l}
+            </Link>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-1 text-xs">
+          <span className="mr-1 text-slate-500">Severity</span>
+          {SEVERITY_TABS.map(([v, l]) => (
+            <Link
+              key={v}
+              href={`/notifications${withParams(params, { severity: v, page: null })}`}
+              className={cx(
+                "rounded-full px-2.5 py-1",
+                severityFilter === v
+                  ? "bg-brand-700 font-medium text-white"
+                  : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50",
+              )}
+            >
+              {l}
+            </Link>
+          ))}
+        </div>
       </div>
       <Card bodyClassName="p-0">
-        {items.length === 0 ? (
-          <EmptyState title={unreadOnly ? "You're all caught up" : "No alerts yet"} />
+        {visible.length === 0 ? (
+          <EmptyState
+            title={
+              items.length === 0
+                ? unreadOnly
+                  ? "You're all caught up"
+                  : "No alerts yet"
+                : `No ${severityFilter} alerts in this view`
+            }
+          >
+            {items.length > 0 && (
+              <Link href={`/notifications${withParams(params, { severity: null })}`} className="text-brand-700 hover:underline">
+                Clear the severity filter
+              </Link>
+            )}
+          </EmptyState>
         ) : (
           <ul className="divide-y divide-slate-100">
-            {items.map((n) => {
+            {visible.map((n) => {
               const href = n.deposit_id ? `/deposits/${n.deposit_id}` : n.demand_id ? "/demands" : null;
               return (
                 <li key={n.id} className={cx("flex gap-3 px-5 py-4", !n.is_read && "bg-brand-50/40")}>
@@ -107,6 +153,11 @@ export default async function NotificationsPage({ searchParams }: PageProps<"/no
               );
             })}
           </ul>
+        )}
+        {visible.length > 0 && severityFilter && (
+          <p className="border-t border-slate-100 px-5 py-2.5 text-xs text-slate-500">
+            {visible.length} {severityFilter} alert{visible.length === 1 ? "" : "s"} shown
+          </p>
         )}
       </Card>
     </>

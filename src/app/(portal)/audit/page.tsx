@@ -8,12 +8,16 @@ import { formatDateTime } from "@/lib/format";
 import { ROLE_LABELS } from "@/lib/labels";
 import { pageRange, param, searchTerm, withParams } from "@/lib/query";
 import type { AuditLog } from "@/lib/types";
-import { Badge, Card, EmptyState, PageHeader } from "@/components/ui";
+import { Badge, Card, EmptyState, PageHeader, cx } from "@/components/ui";
 import { FilterBar, FilterSelect, Pagination } from "@/components/list-controls";
 
 export const metadata: Metadata = { title: "Audit trail" };
 
 const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+/** Calendar day in IST, `daysBack` days before today. */
+const istDay = (daysBack = 0) =>
+  new Date(Date.now() + 5.5 * 3600 * 1000 - daysBack * 86_400_000).toISOString().slice(0, 10);
 
 export default async function AuditPage({ searchParams }: PageProps<"/audit">) {
   const params = await searchParams;
@@ -55,6 +59,36 @@ export default async function AuditPage({ searchParams }: PageProps<"/audit">) {
           </a>
         }
       />
+      <div className="mb-3 flex flex-wrap items-center gap-1.5 text-xs">
+        <span className="mr-1 text-slate-500">Quick range</span>
+        {[
+          ["Today", 0],
+          ["Last 7 days", 6],
+          ["Last 30 days", 29],
+        ].map(([label, daysBack]) => {
+          const start = istDay(daysBack as number);
+          const end = istDay();
+          const active = from === start && to === end;
+          return (
+            <Link
+              key={label}
+              href={`/audit${withParams(params, { from: start, to: end, page: null })}`}
+              className={cx(
+                "rounded-full px-2.5 py-1",
+                active ? "bg-brand-700 font-medium text-white" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50",
+              )}
+            >
+              {label}
+            </Link>
+          );
+        })}
+        {(from || to) && (
+          <Link href={`/audit${withParams(params, { from: null, to: null, page: null })}`} className="ml-1 text-brand-700 hover:underline">
+            Clear dates
+          </Link>
+        )}
+      </div>
+
       <FilterBar action="/audit" q={q} placeholder="Search summary or user email…" resetHref="/audit">
         <FilterSelect name="entity" label="Record" value={entity} options={Object.entries(ENTITY_LABELS)} />
         <FilterSelect name="action" label="Action" value={action} options={Object.entries(ACTION_LABELS)} />

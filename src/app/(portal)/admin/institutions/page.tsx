@@ -122,6 +122,9 @@ export default async function InstitutionsPage({ searchParams }: PageProps<"/adm
                       </div>
                     </div>
                     <span className="text-sm text-slate-600">{REGION_LABELS[i.region]}</span>
+                    <Link href={`/institutions/${i.id}`} className="text-xs text-brand-700 hover:underline">
+                      Open register
+                    </Link>
                     <Link
                       href={`/deposits?q=${encodeURIComponent(i.aicte_id)}`}
                       className="text-xs text-brand-700 hover:underline"

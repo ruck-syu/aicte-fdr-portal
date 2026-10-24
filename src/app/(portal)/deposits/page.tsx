@@ -10,6 +10,9 @@ import type { DepositOverview, DepositStatus, InstrumentType, Region, Validity }
 import { Card, EmptyState, LinkButton, PageHeader } from "@/components/ui";
 import { AgeBadge, StatusBadge, ValidityBadge } from "@/components/badges";
 import { FilterBar, FilterSelect, Pagination } from "@/components/list-controls";
+import { SortLink } from "@/components/sort-link";
+import { PrintButton } from "@/components/print-button";
+import { PrintMeta } from "@/components/print-meta";
 
 export const metadata: Metadata = { title: "Deposits" };
 
@@ -17,6 +20,25 @@ const STATUS_OPTIONS: [string, string][] = [
   ["held", "Held (verified + release requested)"],
   ...(Object.entries(STATUS_LABELS) as [string, string][]),
 ];
+
+// Columns the register can be ordered by, through ?sort=&dir=.
+const SORT_FIELDS = {
+  reference: "reference_no",
+  institution: "institution_name",
+  amount: "amount",
+  issue: "issue_date",
+  maturity: "maturity_date",
+} as const;
+type SortKey = keyof typeof SORT_FIELDS | "updated";
+const ASC_BY_DEFAULT: SortKey[] = ["reference", "institution", "issue", "maturity"];
+const SORT_LABELS: Record<SortKey, string> = {
+  reference: "reference",
+  institution: "institution",
+  amount: "amount (high to low)",
+  issue: "issue date",
+  maturity: "maturity date",
+  updated: "recently updated",
+};
 
 export default async function DepositsPage({ searchParams }: PageProps<"/deposits">) {
   const params = await searchParams;
@@ -29,34 +51,72 @@ export default async function DepositsPage({ searchParams }: PageProps<"/deposit
   const validity = param(params.validity);
   const region = param(params.region);
   const instrument = param(params.instrument);
-  const sort = param(params.sort);
+  const requestedSort = param(params.sort);
+  const sort: SortKey = requestedSort in SORT_FIELDS ? (requestedSort as keyof typeof SORT_FIELDS) : "updated";
+  const requestedDir = param(params.dir);
+  const dir: "asc" | "desc" =
+    requestedDir === "asc" || requestedDir === "desc"
+      ? requestedDir
+      : ASC_BY_DEFAULT.includes(sort)
+        ? "asc"
+        : "desc";
   const { page, from, to } = pageRange(params.page);
 
-  let query = supabase.from("deposit_overview").select("*", { count: "exact" });
-  if (q) {
-    query = query.or(
-      ["reference_no", "instrument_number", "bank_name", "institution_name", "institution_aicte_id", "approval_case_id"]
-        .map((c) => `${c}.ilike.*${q}*`)
-        .join(","),
-    );
-  }
-  if (status === "held") query = query.in("status", ["verified", "release_requested"]);
-  else if (status in STATUS_LABELS) query = query.eq("status", status as DepositStatus);
-  if (validity in VALIDITY_LABELS) query = query.eq("validity", validity as Validity);
-  if (region in REGION_LABELS) query = query.eq("region", region as Region);
-  if (instrument in INSTRUMENT_LABELS) query = query.eq("instrument_type", instrument as InstrumentType);
-  query =
-    sort === "maturity"
-      ? query.order("maturity_date", { ascending: true })
-      : sort === "amount"
-        ? query.order("amount", { ascending: false })
-        : query.order("updated_at", { ascending: false });
+  // Clicking the active column reverses it; a new column starts at its natural order.
+  const sortHref = (key: keyof typeof SORT_FIELDS) => {
+    const nextDir = sort === key ? (dir === "asc" ? "desc" : "asc") : ASC_BY_DEFAULT.includes(key) ? "asc" : "desc";
+    return `/deposits${withParams(params, { sort: key, dir: nextDir, page: null })}`;
+  };
 
-  const { data, count, error } = await query.range(from, to);
+  // Built twice: once for the page, once to total the money across the same filter.
+  const filtered = () => {
+    let query = supabase.from("deposit_overview").select("*", { count: "exact" });
+    if (q) {
+      query = query.or(
+        ["reference_no", "instrument_number", "bank_name", "institution_name", "institution_aicte_id", "approval_case_id"]
+          .map((c) => `${c}.ilike.*${q}*`)
+          .join(","),
+      );
+    }
+    if (status === "held") query = query.in("status", ["verified", "release_requested"]);
+    else if (status in STATUS_LABELS) query = query.eq("status", status as DepositStatus);
+    if (validity in VALIDITY_LABELS) query = query.eq("validity", validity as Validity);
+    if (region in REGION_LABELS) query = query.eq("region", region as Region);
+    if (instrument in INSTRUMENT_LABELS) query = query.eq("instrument_type", instrument as InstrumentType);
+    return query;
+  };
+
+  const [{ data, count, error }, { data: amountRows }] = await Promise.all([
+    filtered()
+      .order(sort === "updated" ? "updated_at" : SORT_FIELDS[sort], { ascending: dir === "asc" })
+      .range(from, to),
+    // PostgREST caps a response at 1,000 rows; beyond that the total is a lower bound.
+    filtered().select("amount").limit(1000),
+  ]);
   const rows = (data ?? []) as DepositOverview[];
+
+  const amounts = (amountRows ?? []) as { amount: number }[];
+  const filteredTotal = amounts.reduce((sum, r) => sum + Number(r.amount), 0);
+  const totalCapped = (count ?? 0) > amounts.length;
+
+  const statusLabel = STATUS_OPTIONS.find(([v]) => v === status)?.[1];
+  const validityLabel = validity in VALIDITY_LABELS ? VALIDITY_LABELS[validity as Validity] : null;
+  const instrumentLabel = instrument in INSTRUMENT_LABELS ? INSTRUMENT_LABELS[instrument as InstrumentType] : null;
+  const regionLabel = region in REGION_LABELS ? REGION_LABELS[region as Region] : null;
+  const filterSummary = [
+    q && `search “${q}”`,
+    statusLabel && `${statusLabel} only`,
+    validityLabel && `${validityLabel} only`,
+    instrumentLabel,
+    regionLabel,
+    `sorted by ${SORT_LABELS[sort]}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <>
+      <PrintMeta label={`Deposits · page ${page}${filterSummary ? ` · ${filterSummary}` : ""}`} />
       <PageHeader
         title="Deposits"
         description={
@@ -74,6 +134,7 @@ export default async function DepositsPage({ searchParams }: PageProps<"/deposit
                 <Download className="size-4" /> Export CSV
               </a>
             )}
+            <PrintButton summary={`Deposits list · page ${page} · ${filterSummary}`} />
             {user.role === "institute_user" && (
               <LinkButton href="/deposits/new">
                 <Plus className="size-4" /> Register deposit
@@ -110,16 +171,23 @@ export default async function DepositsPage({ searchParams }: PageProps<"/deposit
             options={Object.entries(REGION_LABELS) as [string, string][]}
           />
         )}
-        <FilterSelect
-          name="sort"
-          label="Sort"
-          value={sort}
-          options={[
-            ["maturity", "Earliest maturity"],
-            ["amount", "Largest amount"],
-          ]}
-        />
       </FilterBar>
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-xs text-slate-500">
+        <span className="no-print">
+          Sorted by {SORT_LABELS[sort]}. Use a column heading to re-order; the order carries into the CSV export.
+        </span>
+        {!error && (
+          <span>
+            <span className="num text-slate-700">{(count ?? 0).toLocaleString("en-IN")}</span> deposit
+            {(count ?? 0) === 1 ? "" : "s"} match · total{" "}
+            <span className="num font-medium text-slate-800">
+              {totalCapped ? "≥ " : ""}
+              {formatINR(filteredTotal)}
+            </span>
+            {totalCapped ? " (first 1,000)" : ""}
+          </span>
+        )}
+      </div>
 
       <Card bodyClassName="p-0">
         {error ? (
@@ -137,12 +205,43 @@ export default async function DepositsPage({ searchParams }: PageProps<"/deposit
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Reference</th>
-                  {official && <th>Institution</th>}
+                  <th aria-sort={sort === "reference" ? (dir === "asc" ? "ascending" : "descending") : "none"}>
+                    <SortLink
+                      label="Reference"
+                      href={sortHref("reference")}
+                      active={sort === "reference"}
+                      dir={dir}
+                    />
+                  </th>
+                  {official && (
+                    <th aria-sort={sort === "institution" ? (dir === "asc" ? "ascending" : "descending") : "none"}>
+                      <SortLink
+                        label="Institution"
+                        href={sortHref("institution")}
+                        active={sort === "institution"}
+                        dir={dir}
+                      />
+                    </th>
+                  )}
                   <th>Instrument</th>
-                  <th className="text-right">Amount</th>
-                  <th>Issue</th>
-                  <th>Maturity</th>
+                  <th
+                    className="text-right"
+                    aria-sort={sort === "amount" ? (dir === "asc" ? "ascending" : "descending") : "none"}
+                  >
+                    <SortLink
+                      label="Amount"
+                      href={sortHref("amount")}
+                      active={sort === "amount"}
+                      dir={dir}
+                      align="right"
+                    />
+                  </th>
+                  <th aria-sort={sort === "issue" ? (dir === "asc" ? "ascending" : "descending") : "none"}>
+                    <SortLink label="Issue" href={sortHref("issue")} active={sort === "issue"} dir={dir} />
+                  </th>
+                  <th aria-sort={sort === "maturity" ? (dir === "asc" ? "ascending" : "descending") : "none"}>
+                    <SortLink label="Maturity" href={sortHref("maturity")} active={sort === "maturity"} dir={dir} />
+                  </th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -157,7 +256,12 @@ export default async function DepositsPage({ searchParams }: PageProps<"/deposit
                     </td>
                     {official && (
                       <td className="max-w-56">
-                        <div className="truncate">{d.institution_name}</div>
+                        <Link
+                          href={`/institutions/${d.institution_id}`}
+                          className="block truncate hover:text-brand-700 hover:underline"
+                        >
+                          {d.institution_name}
+                        </Link>
                         <div className="text-xs text-slate-500">
                           {d.institution_aicte_id} · {REGION_LABELS[d.region].split(" ")[0]}
                         </div>
