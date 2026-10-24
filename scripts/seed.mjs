@@ -79,6 +79,7 @@ const users = [
   { email: "grievance@demo.fdr", role: "release_officer", clearance_cell: "grievance", full_name: "Gita Menon", designation: "Officer, Grievance Cell" },
   { email: "vigilance@demo.fdr", role: "release_officer", clearance_cell: "vigilance", full_name: "Vivek Rathi", designation: "Officer, Vigilance Cell" },
   { email: "pgrc@demo.fdr", role: "release_officer", clearance_cell: "pgrc", full_name: "Priya Nair", designation: "Member Secretary, PGRC" },
+  { email: "auditor@demo.fdr", role: "auditor", full_name: "Anil Auditor", designation: "Internal Audit" },
 ];
 const existing = new Map();
 for (let page = 1; ; page++) {

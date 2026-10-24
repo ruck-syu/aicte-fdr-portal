@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { ALLOWED_MIME_TYPES, DOCUMENTS_BUCKET, MAX_UPLOAD_BYTES } from "@/lib/env";
 import { formatBytes } from "@/lib/format";
@@ -9,14 +10,18 @@ import type { DocumentType } from "@/lib/types";
 import { recordDocument } from "@/app/(portal)/documents/actions";
 import { buttonClass } from "./ui";
 
-type ItemStatus = "queued" | "uploading" | "done" | "error";
-type Item = { id: string; name: string; size: number; status: ItemStatus; error?: string };
+type RowStatus = "staged" | "uploading" | "done" | "error" | "rejected";
+type Row = { id: string; file: File; name: string; size: number; type: DocumentType; status: RowStatus; error?: string };
 
 /**
  * Uploads straight from the browser to Supabase Storage (bypassing Vercel's
  * request-size limit; storage RLS restricts the folder), then records each
  * file through a server action. Files are sent one at a time so version numbers
  * for a document type stay ordered.
+ *
+ * Files are staged first, so one drop can carry a mixed batch: each row keeps
+ * its own document type and can be retried after a failure without resending
+ * the rest.
  */
 export function DocumentUploader({
   institutionId,
@@ -32,7 +37,7 @@ export function DocumentUploader({
   defaultType?: DocumentType;
 }) {
   const [docType, setDocType] = useState<DocumentType>(defaultType ?? docTypes[0]);
-  const [items, setItems] = useState<Item[]>([]);
+  const [rows, setRows] = useState<Row[]>([]);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -64,45 +69,48 @@ export function DocumentUploader({
     return null;
   }
 
-  async function addFiles(files: File[]) {
+  function addFiles(files: File[]) {
     if (busy || files.length === 0) return;
-    const type = docType;
-    const queued: { file: File; id: string }[] = [];
-    const rejected: Item[] = [];
-    for (const file of files) {
-      const id = crypto.randomUUID();
-      if (!ALLOWED_MIME_TYPES.includes(file.type)) {
-        rejected.push({ id, name: file.name, size: file.size, status: "error", error: "Not a PDF, JPG or PNG" });
-      } else if (file.size > MAX_UPLOAD_BYTES) {
-        rejected.push({ id, name: file.name, size: file.size, status: "error", error: "Larger than 10 MB" });
-      } else {
-        queued.push({ file, id });
-      }
-    }
-    if (queued.length === 0) {
-      setItems((prev) => [...prev, ...rejected].slice(-12));
-      return;
-    }
-
-    setItems((prev) =>
-      [
-        ...prev,
-        ...queued.map(({ file, id }) => ({ id, name: file.name, size: file.size, status: "queued" as const })),
-        ...rejected,
-      ].slice(-12),
-    );
-    setBusy(true);
-    for (const { file, id } of queued) {
-      setItems((prev) => prev.map((i) => (i.id === id ? { ...i, status: "uploading" } : i)));
-      const error = await uploadOne(file, type);
-      setItems((prev) => prev.map((i) => (i.id === id ? { ...i, status: error ? "error" : "done", error: error ?? undefined } : i)));
-    }
-    setBusy(false);
+    const added = files.map((file) => {
+      const rejection = !ALLOWED_MIME_TYPES.includes(file.type)
+        ? "Not a PDF, JPG or PNG"
+        : file.size > MAX_UPLOAD_BYTES
+          ? "Larger than 10 MB"
+          : null;
+      return {
+        id: crypto.randomUUID(),
+        file,
+        name: file.name,
+        size: file.size,
+        type: docType,
+        status: rejection ? ("rejected" as const) : ("staged" as const),
+        error: rejection ?? undefined,
+      };
+    });
+    setRows((prev) => [...prev, ...added].slice(-12));
     if (fileRef.current) fileRef.current.value = "";
   }
 
-  const done = items.filter((i) => i.status === "done").length;
-  const failed = items.filter((i) => i.status === "error").length;
+  function patch(id: string, change: Partial<Row>) {
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...change } : r)));
+  }
+
+  async function upload() {
+    if (busy) return;
+    const queue = rows.filter((r) => r.status === "staged" || r.status === "error");
+    if (queue.length === 0) return;
+    setBusy(true);
+    for (const row of queue) {
+      patch(row.id, { status: "uploading", error: undefined });
+      const error = await uploadOne(row.file, row.type);
+      patch(row.id, { status: error ? "error" : "done", error: error ?? undefined });
+    }
+    setBusy(false);
+  }
+
+  const pending = rows.filter((r) => r.status === "staged" || r.status === "error").length;
+  const done = rows.filter((r) => r.status === "done").length;
+  const failed = rows.filter((r) => r.status === "error").length;
 
   return (
     <div
@@ -119,12 +127,12 @@ export function DocumentUploader({
       onDrop={(e) => {
         e.preventDefault();
         setDragging(false);
-        if (!busy) void addFiles(Array.from(e.dataTransfer.files ?? []));
+        if (!busy) addFiles(Array.from(e.dataTransfer.files ?? []));
       }}
     >
       <div className="flex flex-wrap items-end gap-3">
         <label className="min-w-52 flex-1">
-          <span className="mb-1 block text-xs font-medium text-slate-600">Document type</span>
+          <span className="mb-1 block text-xs font-medium text-slate-600">Document type for new files</span>
           <select
             className="input"
             value={docType}
@@ -139,14 +147,7 @@ export function DocumentUploader({
           </select>
         </label>
         <label className={buttonClass("secondary", "md", busy ? "pointer-events-none opacity-60" : "cursor-pointer")}>
-          {busy ? (
-            <>
-              <span className="size-3.5 animate-spin rounded-full border-2 border-current border-r-transparent" />
-              Uploading…
-            </>
-          ) : (
-            "Choose files & upload"
-          )}
+          Add files
           <input
             ref={fileRef}
             type="file"
@@ -154,38 +155,75 @@ export function DocumentUploader({
             className="sr-only"
             accept=".pdf,.jpg,.jpeg,.png"
             disabled={busy}
-            onChange={(e) => {
-              const files = Array.from(e.target.files ?? []);
-              if (files.length) void addFiles(files);
-            }}
+            onChange={(e) => addFiles(Array.from(e.target.files ?? []))}
           />
         </label>
+        {pending > 0 && (
+          <button type="button" className={buttonClass("primary", "md")} disabled={busy} onClick={() => void upload()}>
+            {busy ? (
+              <>
+                <span className="size-3.5 animate-spin rounded-full border-2 border-current border-r-transparent" />
+                Uploading…
+              </>
+            ) : (
+              `Upload ${pending} file${pending === 1 ? "" : "s"}`
+            )}
+          </button>
+        )}
       </div>
 
       <p className="mt-2 text-xs text-slate-500">
-        PDF, JPG or PNG up to 10 MB each. Drop several files — they upload one after another with the type selected
-        above. Uploading the same type again keeps the earlier file as a previous version.
+        PDF, JPG or PNG up to 10 MB each. Drop several files at once — each row keeps its own type, so one batch can mix
+        an FDR scan with an affidavit. Uploading the same type again keeps the earlier file as a previous version.
       </p>
 
-      {items.length > 0 && (
+      {rows.length > 0 && (
         <div className="mt-3 border-t border-slate-200 pt-2.5">
           <ul className="space-y-1.5">
-            {items.map((item) => (
-              <li key={item.id} className="flex items-center gap-2 text-xs">
-                <span className="min-w-0 flex-1 truncate text-slate-700" title={item.name}>
-                  {item.name}
+            {rows.map((row) => (
+              <li key={row.id} className="flex items-center gap-2 text-xs">
+                <span className="min-w-0 flex-1 truncate text-slate-700" title={row.name}>
+                  {row.name}
                 </span>
-                <span className="num shrink-0 text-slate-400">{formatBytes(item.size)}</span>
-                {item.status === "queued" && <span className="shrink-0 text-slate-500">Queued</span>}
-                {item.status === "uploading" && <span className="shrink-0 text-brand-700">Uploading…</span>}
-                {item.status === "done" && <span className="shrink-0 font-medium text-emerald-700">Uploaded</span>}
-                {item.status === "error" && <span className="shrink-0 text-red-700">{item.error}</span>}
+                <span className="num shrink-0 text-slate-400">{formatBytes(row.size)}</span>
+                {row.status === "staged" || row.status === "error" || row.status === "rejected" ? (
+                  <select
+                    aria-label={`Document type for ${row.name}`}
+                    className="shrink-0 rounded border border-slate-300 bg-white px-1 py-0.5 text-xs text-slate-700"
+                    value={row.type}
+                    disabled={busy || row.status === "rejected"}
+                    onChange={(e) => patch(row.id, { type: e.target.value as DocumentType })}
+                  >
+                    {docTypes.map((t) => (
+                      <option key={t} value={t}>
+                        {DOCUMENT_LABELS[t]}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="shrink-0 text-slate-500">{DOCUMENT_LABELS[row.type]}</span>
+                )}
+                {row.status === "uploading" && <span className="shrink-0 text-brand-700">Uploading…</span>}
+                {row.status === "done" && <span className="shrink-0 font-medium text-emerald-700">Uploaded</span>}
+                {(row.status === "error" || row.status === "rejected") && row.error && (
+                  <span className="shrink-0 text-red-700">{row.error}</span>
+                )}
+                {row.status !== "uploading" && row.status !== "done" && !busy && (
+                  <button
+                    type="button"
+                    aria-label={`Remove ${row.name}`}
+                    className="shrink-0 rounded p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+                    onClick={() => setRows((prev) => prev.filter((r) => r.id !== row.id))}
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                )}
               </li>
             ))}
           </ul>
-          {!busy && (done > 0 || failed > 0) && (
+          {!busy && (done > 0 || (failed > 0 && pending > 0)) && (
             <p className="mt-2 text-xs text-slate-500">
-              {done} uploaded{failed > 0 ? ` · ${failed} failed` : ""}.
+              {done} uploaded{failed > 0 ? ` · ${failed} failed — select a type and upload again to retry` : ""}.
             </p>
           )}
         </div>

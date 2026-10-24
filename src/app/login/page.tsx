@@ -10,6 +10,7 @@ const DEMO_ACCOUNTS = [
   ["admin@demo.fdr", "Administrator"],
   ["verifier@demo.fdr", "AICTE Verifier (all regions)"],
   ["ro.northern@demo.fdr", "Regional Officer, Northern"],
+  ["auditor@demo.fdr", "Auditor (read-only)"],
   ["accounts@alpha.demo.fdr", "Institute (Alpha Institute)"],
   ["accounts@beta.demo.fdr", "Institute (Beta College)"],
 ];

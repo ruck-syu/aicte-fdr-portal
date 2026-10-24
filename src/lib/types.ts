@@ -1,4 +1,10 @@
-export type AppRole = "institute_user" | "regional_officer" | "aicte_verifier" | "release_officer" | "admin";
+export type AppRole =
+  | "institute_user"
+  | "regional_officer"
+  | "aicte_verifier"
+  | "release_officer"
+  | "auditor"
+  | "admin";
 export type Region =
   | "central"
   | "eastern"

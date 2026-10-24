@@ -36,10 +36,25 @@ export async function requireRole(...roles: AppRole[]) {
   return user;
 }
 
+/** Any role that reads across institutions — includes the read-only auditor. */
 export function isOfficial(role: AppRole | null | undefined) {
   return (
-    role === "regional_officer" || role === "aicte_verifier" || role === "release_officer" || role === "admin"
+    role === "regional_officer" ||
+    role === "aicte_verifier" ||
+    role === "release_officer" ||
+    role === "auditor" ||
+    role === "admin"
   );
+}
+
+/** Roles allowed to change workflow state. The auditor is deliberately absent. */
+export function isReviewer(role: AppRole | null | undefined) {
+  return role === "regional_officer" || role === "aicte_verifier" || role === "admin";
+}
+
+/** The auditor reads everything and writes nothing. */
+export function isReadOnly(role: AppRole | null | undefined) {
+  return role === "auditor";
 }
 
 /** Rows a release clearance officer may sign for. Administrators may sign any. */

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { FileText, History } from "lucide-react";
-import { requireUser, isOfficial, canSignClearance } from "@/lib/auth";
+import { requireUser, isOfficial, isReadOnly, isReviewer, canSignClearance } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { displayName, formatBytes, formatDate, formatDateTime, formatINR } from "@/lib/format";
 import {
@@ -94,7 +94,7 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
   const clearedCount = cells.filter((c) => clearanceByCell.get(c)?.status === "cleared").length;
   const allDecided = cells.every((c) => (clearanceByCell.get(c)?.status ?? "pending") !== "pending");
   // An administrator may override a block (with a note), never a missing sign-off.
-  const canApprove = clearedCount === cells.length || (user.role === "admin" && allDecided);
+  const canApprove = isReviewer(user.role) && (clearedCount === cells.length || (user.role === "admin" && allDecided));
   const awaiting = cells.filter((c) => clearanceByCell.get(c)?.status !== "cleared");
   // Above the threshold a reviewer's approval is only the first of two; the
   // second must come from a different, more senior officer.
@@ -366,7 +366,11 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
           </Card>
 
           <Card title="Comments">
-            <CommentThread comments={comments} releaseRequestId={r.id} canComment={r.status !== "withdrawn"} />
+            <CommentThread
+              comments={comments}
+              releaseRequestId={r.id}
+              canComment={!isReadOnly(user.role) && r.status !== "withdrawn"}
+            />
           </Card>
         </div>
 
@@ -423,7 +427,7 @@ export default async function ReleasePage({ params }: PageProps<"/releases/[id]"
               </EmptyState>
             )}
           </Card>
-          {official && (r.status === "submitted" || secondApprovalDue) && (
+          {isReviewer(user.role) && (r.status === "submitted" || secondApprovalDue) && (
             <Card
               title={secondApprovalDue ? "Second approval" : "Decision"}
               description={

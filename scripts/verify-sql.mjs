@@ -95,6 +95,7 @@ const roSouthWest = await user("ro.sw@x", { role: "regional_officer", region: "s
 const grievance = await user("grievance@x", { role: "release_officer", clearance_cell: "grievance" });
 const vigilance = await user("vigilance@x", { role: "release_officer", clearance_cell: "vigilance" });
 const pgrc = await user("pgrc@x", { role: "release_officer", clearance_cell: "pgrc" });
+const auditor = await user("auditor@x", { role: "auditor" });
 const userA = await user("a@x", { role: "institute_user", institution_id: instA });
 const userB = await user("b@x", { role: "institute_user", institution_id: instB });
 const sneaky = (await one(`insert into auth.users (email, raw_user_meta_data)
@@ -595,5 +596,35 @@ const unread = (await as(userA, () => one(`select unread_notification_count() n`
 await as(userA, () => q(`select mark_notifications_read()`));
 assert.equal((await as(userA, () => one(`select unread_notification_count() n`))).n, 0);
 ok(`notification feeds split by audience (institute ${feedA.length}, officer ${feedRO.length}); ${unread} marked read`);
+
+// --- G9: read-only auditor ---------------------------------------------------
+// The auditor reads the whole register, the clearance notes and the national
+// audit trail, and every write path refuses it.
+assert.equal((await one(`select role from profiles where id = $1`, [auditor])).role, "auditor");
+assert.equal((await as(auditor, () => one(`select is_read_only() r`))).r, true);
+const audDeposits = await as(auditor, () => q(`select id from deposits`));
+assert.ok(audDeposits.length >= 3, `auditor should read every deposit, got ${audDeposits.length}`);
+assert.ok((await as(auditor, () => q(`select id from release_clearances`))).length >= 6);
+const audNote = await as(auditor, () => q(`select note from release_clearances where release_request_id = $1 and cell = 'grievance'`, [rr]));
+assert.equal(audNote[0].note, "Enquiry closed; no dues");
+assert.equal((await as(auditor, () => q(`select id from storage.objects`))).length, 1);
+// Session events carry no institution, so only admins and auditors see them.
+assert.ok((await as(auditor, () => q(`select id from audit_logs where institution_id is null`))).length > 0);
+assert.equal((await as(verifier, () => q(`select id from audit_logs where institution_id is null`))).length, 0);
+
+await as(auditor, () => fails(q(`select review_deposit($1, 'verify')`, [dep.id]), /Deposit not found/));
+await as(auditor, () => fails(q(`select set_bank_check($1, 'confirmed', 'X')`, [dep.id]), /Deposit not found/));
+await as(auditor, () => fails(q(`select record_clearance($1, 'grievance', 'cleared')`, [ovRr]), /clearance cell officer/));
+await as(auditor, () => fails(q(`select decide_release($1, 'approve', 'x', 'NOC/1')`, [ovRr]), /Release request not found/));
+await as(auditor, () => fails(q(`select admin_update_profile($1, 'admin', null, null, 'x', null, true)`, [auditor]), /Only administrators/));
+await as(auditor, () => fails(q(`select log_event('user.create', 'x')`), /Not allowed/));
+await as(auditor, () =>
+  fails(q(`insert into deposits (institution_id, instrument_type, instrument_number, bank_name, amount, issue_date, maturity_date)
+    values ($1, 'fdr', 'AUD-1', 'Bank', 100000, current_date, current_date + 365)`, [instA]), /row-level security/));
+await as(auditor, () =>
+  fails(q(`insert into comments (deposit_id, institution_id, body) values ($1, $2, 'auditor note')`, [dep.id, instA]), /row-level security/));
+await as(auditor, () =>
+  fails(q(`insert into storage.objects (bucket_id, name, owner_id) values ('deposit-documents', $1, $2)`, [`${instA}/auditor/x.pdf`, auditor]), /row-level security/));
+ok("auditor: reads every register, clearance notes, documents and the national audit trail; every write is refused");
 
 console.log("\nAll database checks passed.");

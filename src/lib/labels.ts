@@ -18,6 +18,7 @@ export const ROLE_LABELS: Record<AppRole, string> = {
   regional_officer: "Regional Officer",
   aicte_verifier: "AICTE Verifier",
   release_officer: "Release Clearance Officer",
+  auditor: "Auditor (read-only)",
   admin: "Administrator",
 };
 

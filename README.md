@@ -21,6 +21,7 @@ A central register of the security deposits (FDRs, joint FDRs, bank guarantees a
 | Regional Officer | Own region | Issue demands, verify / return / reject deposits, record bank confirmation, decide releases, reports |
 | AICTE Verifier | All regions | Same as Regional Officer, nationally |
 | Release Clearance Officer | One clearance cell (Grievance / Vigilance / PGRC) | Sign off or block releases for their cell; read access across institutions |
+| Auditor | Everything | Read every register, document, clearance note and the national audit trail; no write anywhere |
 | Administrator | Everything | Users, institutions (incl. CSV import), alert and document rules |
 
 Access rules are enforced in Postgres with Row Level Security; the UI only mirrors them. Workflow transitions (submit, verify, release…) run through `SECURITY DEFINER` functions that check role and state. Every insert, update and delete is written to an append-only `audit_logs` table by triggers. Sign-ins, document views and report exports are logged there too.
@@ -52,7 +53,7 @@ A profile is created for every auth user. Role, institution and region come from
 - **Refund quote.** Every release request shows an indicative refund: principal, simple interest accrued from the issue date (the deposit's own rate, or the configured default), and an early-release penalty when the deposit has not been held for the minimum period. Approving freezes that quote on the request as the sanctioned amount, so the figure is auditable and never recomputed retroactively. The rate card lives under **Admin → Settings**.
 - **Print / Save as PDF.** Reports and the deposit and release pages have a **Print / Save as PDF** button. The print stylesheet renders an A4 document: navigation, report filters and action controls are dropped, table headers repeat across pages, and a header line carries the record label and generation time. Printing is recorded in the audit trail as `report.export` with a `PDF · …` summary, so paper output is traceable like a CSV download.
 - **Queue ageing.** Pending verification, release requests and open demands carry a "Waiting 3d" badge from their submission date (amber at two days, red at five), and the dashboard's verification queue shows the same counter — so the oldest item is visible without opening each record.
-- **Documents.** The uploader takes several files at once and accepts a drag-and-drop onto the page: each file is validated (PDF/JPEG/PNG, up to 10 MB), listed with its type and progress, and uploaded as one audited version per file. A partial failure names the files that did not upload and leaves the successful ones in place.
+- **Documents.** The uploader accepts several files at once, by picker or drag-and-drop. Files are staged first rather than sent immediately, so one batch can mix types: each row carries its own document type (defaulting to the one selected) and can be changed before upload. Each file is validated (PDF/JPEG/PNG, up to 10 MB), uploaded on its own as one audited version, and reported row by row. A failure names the file and stops nothing — retry it from the same list without resending the rest.
 - **Clearance progress.** The releases list shows how many of the three cells have cleared ("Clearances 2/3", flagged red when a cell has blocked), and a release officer can switch the queue to only the releases waiting on their own cell.
 - **Search.** The sidebar search box queries deposits, release requests, demand notices and (for officials) institutions in one go, matching references, instrument numbers, approval cases and institution names, and links each hit to its record. Row-level security still applies, so a search never reveals a record outside your scope.
 - **Audit trail.** `/audit` filters by record type, action, user or free text and by date range (with today / 7-day / 30-day presets), and **Export CSV** downloads exactly the filtered rows (capped at 10,000) as a `report.export` audit entry. The dashboard shows the latest activity in your scope, each entry linking to its deposit.
@@ -118,6 +119,7 @@ This creates the following, all with the password `Demo@12345`:
 | grievance@demo.fdr | Release Clearance Officer — Grievance |
 | vigilance@demo.fdr | Release Clearance Officer — Vigilance |
 | pgrc@demo.fdr | Release Clearance Officer — PGRC |
+| auditor@demo.fdr | Auditor (read-only) |
 | accounts@alpha.demo.fdr | Institute: Alpha Institute of Technology |
 | accounts@beta.demo.fdr | Institute: Beta College of Engineering |
 | accounts@gamma.demo.fdr | Institute: Gamma Polytechnic |
@@ -137,6 +139,7 @@ npm run dev                  # http://localhost:3000
 | `npm run typecheck` | Generate route types and run `tsc` |
 | `npm run lint` | ESLint |
 | `npm run db:verify` | Apply the migration to an in-memory Postgres (PGlite) and exercise the workflow and RLS rules end to end. No Docker needed |
+| `npm run check` | `typecheck` + `lint` + `db:verify` in one go — the gate every change should pass |
 | `npm run build` | Production build |
 
 ## Integration hooks

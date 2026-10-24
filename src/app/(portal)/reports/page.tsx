@@ -14,7 +14,7 @@ export const metadata: Metadata = { title: "Reports" };
 
 export default async function ReportsPage({ searchParams }: PageProps<"/reports">) {
   const params = await searchParams;
-  await requireRole("regional_officer", "aicte_verifier", "admin");
+  await requireRole("regional_officer", "aicte_verifier", "auditor", "admin");
   const requested = param(params.report);
   // The full registers belong to their list pages; they are reachable here for the CSV only.
   const CSV_ONLY: ReportKey[] = ["deposits", "releases", "demands"];
