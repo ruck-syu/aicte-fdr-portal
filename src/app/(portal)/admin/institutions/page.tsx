@@ -46,9 +46,18 @@ function InstitutionFields({ i, prefix }: { i?: Institution; prefix: string }) {
       <Field label="Address" htmlFor={`${prefix}-address`} className="sm:col-span-2 lg:col-span-3">
         <input id={`${prefix}-address`} name="address" defaultValue={i?.address ?? ""} className="input" />
       </Field>
-      <Field label="Contact phone" htmlFor={`${prefix}-phone`}>
+      <Field label="Contact phone" htmlFor={`${prefix}-phone`} hint="Needed before SMS alerts can be sent">
         <input id={`${prefix}-phone`} name="contact_phone" defaultValue={i?.contact_phone ?? ""} className="input" />
       </Field>
+      <label className="flex items-center gap-2 self-end pb-2 text-sm text-slate-700">
+        <input
+          type="checkbox"
+          name="sms_opt_in"
+          defaultChecked={i?.sms_opt_in ?? false}
+          className="size-4 rounded border-slate-300"
+        />
+        Send warning / critical alerts by SMS
+      </label>
     </div>
   );
 }

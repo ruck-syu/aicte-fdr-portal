@@ -3,7 +3,7 @@
 **Source spec:** `Executive Summary.pdf` (AICTE Security Deposit/FDR Management Portal — SIH proposal)
 **Codebase:** `aicte-fdr-portal` @ `main` (no commits yet)
 **Analysis date:** 2026-10-23
-**Current alignment:** ~76% overall — ~90% mandatory/compliance, ~85% common, ~15% innovative.
+**Current alignment:** ~82% overall — ~90% mandatory/compliance, ~90% common, ~20% innovative.
 
 **Legend:** ✅ = shipped and verified (`npm run db:verify` covers it where it is testable). An item with no tick is still open.
 
@@ -27,10 +27,10 @@ This document lists only changes **worth implementing**, ordered by demo/complia
 | G10 | ✅ Amount-threshold second approval for releases | **P1** | 1 d | §2.3 dynamic approvals |
 | G11 | MFA (TOTP) for officials | **P1** | 1 d | §4 security |
 | G12 | ✅ Bulk / drag-drop document upload | **P2** | 0.5–1 d | §2.2 documents |
-| G13 | Retention & archival policy + export job | **P2** | 1–2 d | §4 retention |
-| G14 | SMS channel for alerts | **P2** | 1 d | §2.2 alerts |
+| G13 | ✅ Retention & archival policy (in-place, no cold export) | **P2** | 1–2 d | §4 retention |
+| G14 | ✅ SMS channel for alerts | **P2** | 1 d | §2.2 alerts |
 
-**Quick wins (< 0.5 d each):** QW3–QW4 at the end of this document (QW1–QW2 shipped, see §5).
+**Quick wins (< 0.5 d each):** all four shipped — see §5.
 
 **Explicitly deferred:** OCR/ML, blockchain, chatbot, native mobile app, Aadhaar eSign, payment rails. Rationale in §6.
 
@@ -265,10 +265,27 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 
 ---
 
-## 4. P2 — only if time allows (open items)
+## 4. P2 — both shipped
 
-- **G13. Retention & archival.** Define the retention policy (e.g. 10 years past maturity), add `archived_at`/read-only archive export to object storage, and a documented restore path. Prefer non-destructive archival over deletion. 1–2 days.
-- **G14. SMS channel.** Add a `channel` column to `notifications` and a provider adapter (MSG91/Twilio) with opt-in per institution contact; reuse the cron loop. 1 day.
+### ✅ G13. Retention & archival — shipped (in place, no cold export)
+
+**Why.** The spec asks for a retention rule (§4). The risk is deleting evidence; the answer is a frozen record, not a purge.
+
+**Change.** `app_settings.retention_years` (default 10, editable under **Admin → Settings**); `deposits.archived_at`; an `archival_due` view of settled deposits past maturity + the window; `archive_deposit()` / `unarchive_deposit()` (administrator only, audited); and a trigger guard that refuses any API write to an archived row.
+
+**Shipped 2026-10-26.** `20261026000000_retention_archive.sql` adds the setting, `archived_at` (exposed through `deposit_overview`, which is rebuilt because a view binds its column list), and `archival_due` (released / replaced / rejected rows with `retain_until` and `days_overdue`). The deposit list hides archived rows, the detail page shows an **Archived record** banner with a restore control for administrators, and **Archival due** joins the reports with a CSV export and a link to each record. `db:verify` covers the window, the due list, the administrator-only gate, the frozen row, the restore path and the audit entry. **Deviation:** records are frozen in place; there is no copy to cold object storage, because that would create a second copy of evidence without adding a restore guarantee.
+
+**Effort.** 1 day.
+
+### ✅ G14. SMS channel — shipped (mock + MSG91 adapter)
+
+**Why.** Email is optional and often unread; a maturity date is time-critical (§2.2 alerts).
+
+**Change.** Opt-in per institution contact (`institutions.sms_opt_in`) over the existing `contact_phone`; a provider interface with a deterministic mock (default) and a MSG91 Flow adapter; a service-role-only `sms_queue()`; and a delivery log that dedupes, retries failures and records the provider response.
+
+**Shipped 2026-10-26.** `20261026000001_sms_alerts.sql` adds `notification_deliveries` (notification, institution, channel, masked destination, provider, status, provider ref, error; unique per notice/channel/number), `institutions.sms_opt_in` and `sms_queue(p_since)`, which returns warning / critical notices for opted-in institutions that have no successful SMS yet. `src/lib/sms/` provides the interface, the mock and the MSG91 adapter selected by `SMS_PROVIDER`; `/api/cron/alerts` runs the SMS pass independently of Resend, so a missing email key no longer stops the texts, and a failed send stays queued for the next run (the upsert updates the previous attempt). **Admin → Institutions** carries the opt-in checkbox. `db:verify` covers opt-in gating, the critical-only queue, service-role-only execution, duplicate suppression, retry visibility and scoped reads. **Deviation:** the channel lives on the delivery row rather than on `notifications`, because one notice can go out in-app, by email and by text, and each attempt needs its own record.
+
+**Effort.** 1 day.
 - **Full-text search.** If ILIKE becomes slow: `pg_trgm` GIN indexes now (see QW4), `tsvector` later. Keep the current filter UX.
 - **AICTE system integration / payment rails.** Requires external access and agreements; not a code-only task.
 
@@ -280,8 +297,8 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 |---|---|---|
 | QW1 | ✅ Harden profile provisioning at the DB level | `handle_new_user` cannot see `app_metadata` for admin-created users (GoTrue writes it just after the insert), so the app repaired it by hand in `seed.mjs` and `admin/actions.ts`. `supabase/migrations/20261023120000_profile_app_metadata_sync.sql` adds an `after update of raw_app_meta_data on auth.users` trigger that mirrors role/scope/name into `profiles`, applying only the keys present in `app_metadata` so Supabase's own keys never clobber a portal assignment. `db:verify` covers the late write, the partial update, and the audit row. Shipped 2026-10-23. |
 | QW2 | ✅ Turnaround badge in queues | `AgeBadge` (from `daysSince()`) now shows "Waiting 3d" on the deposits, releases and demands queues and on the dashboard's verification queue, escalating amber at 2 days and red at 5. Shipped 2026-10-23. |
-| QW3 | Trigram indexes (open) | `create extension if not exists pg_trgm; create index ... using gin (institution_name gin_trgm_ops)` on the overview source columns backing ILIKE search. |
-| QW4 | Demo-mode docs (open) | Document `NEXT_PUBLIC_DEMO_MODE=true` in `.env.example` so the login page demo hints appear for reviewers. |
+| QW3 | ✅ Trigram indexes | `20261026000002_search_trgm.sql` enables `pg_trgm` and indexes the columns the ILIKE paths actually scan: institution name / city / AICTE ID, deposit instrument / bank / reference, demand approval case / programme, and release reference. `db:verify` asserts the indexes exist. Shipped 2026-10-26. |
+| QW4 | ✅ Demo-mode docs | `NEXT_PUBLIC_DEMO_MODE` documented in `.env.example`, alongside the SMS variables. Shipped 2026-10-26. |
 
 ### ✅ Shipped 2026-10-24 (no schema change)
 
@@ -356,8 +373,8 @@ Ship P0 before any judging round; treat P1 as the "completeness" story.
 | ✅ §2.1 RBAC | Built (auditor is read-only, enforced in RLS) | — (G9 done) |
 | ✅ §2.2 dashboard | Built | G4 |
 | ✅ §2.2 document mgmt | Built (staged bulk upload, per-file type, retry) | — (G12 done) |
-| ✅ §2.2 search/filter | Built (global search, institution profile, ILIKE) | QW3 |
-| §2.2 alerts | Partial (no SMS, no auto-escalation) | G14 |
+| ✅ §2.2 search/filter | Built (global search, institution profile, trigram-backed ILIKE) | — (QW3 done) |
+| ✅ §2.2 alerts | Built (in-app, email, SMS opt-in; ageing visible) | — (G14 done; auto-escalation still G4) |
 | ✅ §2.2 reporting | Built (CSV on every register + print/PDF) | — |
 | ✅ §2.3 bank API | Built (mock adapter + evidence) | — (G3 done) |
 | §2.3 OCR/ML | Missing | Deferred |
@@ -368,7 +385,7 @@ Ship P0 before any judging round; treat P1 as the "completeness" story.
 | §2.3 eSign | Missing | Deferred |
 | ✅ §2.3 refund calculator | Built (stored sanction) | — (G2 done) |
 | ✅ §3 roles | Built (4 operational roles + clearance officer + read-only auditor) | — (G9 done) |
-| §4 security (MFA, retention) | Partial | G11, G13 |
+| §4 security | Partial (retention done; MFA open) | G11 |
 | ✅ §5 KPIs | Built (90-day turnaround, renewal, flag ageing) | — (G4 done) |
 | §5 testing | Partial (SQL regression + `npm run check`; no browser E2E) | G5 |
 | §6 roadmap Bank/E-Pay | Missing | Deferred |

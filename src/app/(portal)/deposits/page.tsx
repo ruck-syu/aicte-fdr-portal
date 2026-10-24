@@ -70,7 +70,9 @@ export default async function DepositsPage({ searchParams }: PageProps<"/deposit
 
   // Built twice: once for the page, once to total the money across the same filter.
   const filtered = () => {
-    let query = supabase.from("deposit_overview").select("*", { count: "exact" });
+    // Archived records are frozen evidence, not live holdings: they live on the
+    // Archival due report and their own detail page.
+    let query = supabase.from("deposit_overview").select("*", { count: "exact" }).is("archived_at", null);
     if (q) {
       query = query.or(
         ["reference_no", "instrument_number", "bank_name", "institution_name", "institution_aicte_id", "approval_case_id"]

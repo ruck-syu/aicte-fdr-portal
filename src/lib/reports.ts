@@ -41,6 +41,7 @@ export const REPORTS = {
   flagged: "Flagged / returned deposits",
   "pending-releases": "Releases awaiting decision",
   "sanctioned-refunds": "Sanctioned refunds",
+  "archival-due": "Archival due",
   kpis: "KPIs & service levels",
   deposits: "Full deposit register",
   releases: "Full release register",
@@ -49,6 +50,21 @@ export const REPORTS = {
 export type ReportKey = keyof typeof REPORTS;
 
 type Params = Record<string, string | string[] | undefined>;
+
+/** Row shape of the archival_due view, as far as the report needs it. */
+type ArchivalDueRow = {
+  id: string;
+  reference_no: string;
+  institution_name: string;
+  institution_aicte_id: string;
+  region: Region;
+  instrument_type: InstrumentType;
+  bank_name: string;
+  amount: number;
+  maturity_date: string;
+  retain_until: string;
+  days_overdue: number;
+};
 
 /** Calendar quarter after the current one, as YYYY-MM-DD bounds (IST). */
 export function nextQuarter(now = new Date()) {
@@ -258,6 +274,37 @@ export async function runReport(supabase: SupabaseClient, key: ReportKey, params
           { metric: "Matured without renewal", value: s.expired ?? 0 },
           { metric: "Pending verification", value: s.pending_verification ?? 0 },
         ],
+      };
+    }
+    case "archival-due": {
+      const { data } = await supabase.from("archival_due").select("*").order("retain_until");
+      return {
+        title: REPORTS[key],
+        description:
+          "Settled deposits whose retention window has elapsed. Archiving freezes the record and keeps it readable; nothing is ever deleted.",
+        columns: [
+          { key: "reference", label: "Reference" },
+          { key: "institution", label: "Institution" },
+          { key: "aicte_id", label: "AICTE ID" },
+          { key: "region", label: "Region" },
+          { key: "instrument", label: "Instrument" },
+          { key: "amount", label: "Amount (₹)", numeric: true, money: true },
+          { key: "maturity", label: "Maturity" },
+          { key: "retain_until", label: "Retain until" },
+          { key: "days_overdue", label: "Days overdue", numeric: true },
+        ],
+        rows: ((data ?? []) as ArchivalDueRow[]).map((d) => ({
+          _href: `/deposits/${d.id}`,
+          reference: d.reference_no,
+          institution: d.institution_name,
+          aicte_id: d.institution_aicte_id,
+          region: REGION_LABELS[d.region],
+          instrument: `${INSTRUMENT_SHORT[d.instrument_type]} · ${d.bank_name}`,
+          amount: Number(d.amount),
+          maturity: formatDate(d.maturity_date),
+          retain_until: formatDate(d.retain_until),
+          days_overdue: d.days_overdue,
+        })),
       };
     }
     case "deposits": {

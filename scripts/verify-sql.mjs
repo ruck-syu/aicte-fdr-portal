@@ -4,11 +4,12 @@
 //
 //   npm run db:verify
 import { PGlite } from "@electric-sql/pglite";
+import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 
-const db = new PGlite();
+const db = new PGlite({ extensions: { pg_trgm } });
 const migrationsDir = join(import.meta.dirname, "..", "supabase", "migrations");
 
 await db.exec(`
@@ -626,5 +627,75 @@ await as(auditor, () =>
 await as(auditor, () =>
   fails(q(`insert into storage.objects (bucket_id, name, owner_id) values ('deposit-documents', $1, $2)`, [`${instA}/auditor/x.pdf`, auditor]), /row-level security/));
 ok("auditor: reads every register, clearance notes, documents and the national audit trail; every write is refused");
+
+// --- G13: retention and archival ---------------------------------------------
+assert.equal((await one(`select retention_years from app_settings`)).retention_years, 10);
+const settled = (await one(`insert into deposits (institution_id, instrument_type, instrument_number, bank_name, amount,
+    issue_date, maturity_date, status, released_at)
+  values ($1, 'fdr', 'OLD-1', 'Bank of Baroda', 100000, current_date - 4400, current_date - 4380, 'released', current_date - 4000)
+  returning id`, [instA])).id;
+const young = (await one(`insert into deposits (institution_id, instrument_type, instrument_number, bank_name, amount,
+    issue_date, maturity_date, status, released_at)
+  values ($1, 'fdr', 'NEW-1', 'Bank of Baroda', 100000, current_date - 700, current_date - 600, 'released', current_date - 500)
+  returning id`, [instA])).id;
+const due = await as(verifier, () => q(`select id, retention_years, retain_until from archival_due`));
+assert.ok(due.some((d) => d.id === settled), "a deposit past its retention window should be due");
+assert.ok(!due.some((d) => d.id === young), "a recent deposit must not be due");
+assert.equal(due.find((d) => d.id === settled).retention_years, 10);
+
+await as(verifier, () => fails(q(`select archive_deposit($1)`, [settled]), /Only administrators/));
+await as(admin, () => q(`select archive_deposit($1)`, [settled]));
+assert.ok((await one(`select archived_at from deposits where id = $1`, [settled])).archived_at);
+assert.ok(!(await q(`select id from archival_due`)).some((d) => d.id === settled));
+assert.ok((await one(`select count(*)::int n from audit_logs where entity_type = 'deposits' and entity_id = $1 and action = 'update'`, [settled])).n >= 1);
+
+// Archived rows are frozen for API writers, and restore reopens them.
+const frozen = (await one(`insert into deposits (institution_id, instrument_type, instrument_number, bank_name, amount,
+    issue_date, maturity_date)
+  values ($1, 'fdr', 'FROZEN-1', 'Bank', 100000, current_date, current_date + 365) returning id`, [instA])).id;
+await as(admin, () => q(`select archive_deposit($1)`, [frozen]));
+await as(userA, () => fails(q(`update deposits set amount = 200000 where id = $1`, [frozen]), /read-only/));
+await as(admin, () => q(`select unarchive_deposit($1)`, [frozen]));
+await as(userA, () => q(`update deposits set amount = 200000 where id = $1`, [frozen]));
+assert.equal(Number((await one(`select amount from deposits where id = $1`, [frozen])).amount), 200000);
+assert.equal((await as(userA, () => q(`select id from archival_due where id = $1`, [frozen]))).length, 0);
+ok("retention: 10-year window, due list, admin-only archive/restore, frozen while archived, audited");
+
+// --- G14: SMS channel ---------------------------------------------------------
+assert.equal((await one(`select sms_opt_in from institutions where id = $1`, [instA])).sms_opt_in, false);
+const notice = (await one(`insert into notifications (institution_id, kind, severity, audience, title, body)
+  values ($1, 'sms.test', 'critical', 'institution', 'Deposit matures in 7 days', 'Renew or release')
+  returning id`, [instA])).id;
+// No opt-in yet: nothing to send.
+assert.equal((await as("service", () => q(`select * from sms_queue(now() - interval '1 day')`))).length, 0);
+await db.query(`update institutions set sms_opt_in = true, contact_phone = '+91 98100 12345' where id = $1`, [instA]);
+const queue = await as("service", () => q(`select notification_id, phone, severity from sms_queue(now() - interval '1 day')`));
+const mine = queue.find((r) => r.notification_id === notice);
+assert.ok(mine, "a critical notice for an opted-in institution should be texted");
+assert.deepEqual([mine.phone, mine.severity], ["+91 98100 12345", "critical"]);
+await as(userA, () => fails(q(`select * from sms_queue(now())`), /permission denied/));
+
+await as("service", () => q(`insert into notification_deliveries
+  (notification_id, institution_id, channel, destination, provider, status, provider_ref)
+  values ($1, $2, 'sms', 'masked', 'mock', 'sent', 'SM-1')`, [notice, instA]));
+assert.ok(!(await as("service", () => q(`select * from sms_queue(now() - interval '1 day')`))).some((r) => r.notification_id === notice));
+await as("service", () => fails(q(`insert into notification_deliveries
+  (notification_id, institution_id, channel, destination, provider, status)
+  values ($1, $2, 'sms', 'masked', 'mock', 'sent')`, [notice, instA]), /duplicate key/));
+
+// A fresh institution-B account (userB was repurposed as a clearance officer
+// earlier in this run, which reads nationwide).
+const stranger = await user("stranger@x", { role: "institute_user", institution_id: instB });
+assert.equal((await as(userA, () => q(`select id from notification_deliveries`))).length, 1);
+assert.equal((await as(stranger, () => q(`select id from notification_deliveries`))).length, 0);
+assert.equal((await as(auditor, () => q(`select id from notification_deliveries`))).length, 1);
+ok("SMS: opt-in gates the queue, the delivery log dedupes, scoped reads, service-role only");
+
+// --- QW3: trigram indexes for the ILIKE search paths --------------------------
+const trgm = (await q(`select indexname from pg_indexes where indexname in
+  ('institutions_name_trgm', 'deposits_instrument_trgm', 'demands_case_trgm', 'releases_reference_trgm')`))
+  .map((r) => r.indexname);
+assert.equal(trgm.length, 4);
+ok("search: trigram indexes present for institution, instrument, approval case and release reference");
 
 console.log("\nAll database checks passed.");
