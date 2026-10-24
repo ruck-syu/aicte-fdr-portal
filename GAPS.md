@@ -5,6 +5,8 @@
 **Analysis date:** 2026-10-23
 **Current alignment:** ~70% overall — ~85% mandatory/compliance, ~80% common, ~15% innovative.
 
+**Legend:** ✅ = shipped and verified (`npm run db:verify` covers it where it is testable). An item with no tick is still open.
+
 This document lists only changes **worth implementing**, ordered by demo/compliance value per unit of effort. Each item is self-contained: why it matters, what exists today, what to build, how to prove it works.
 
 ---
@@ -20,7 +22,7 @@ This document lists only changes **worth implementing**, ordered by demo/complia
 | G5 | Regression + E2E tests for the above | **P0** | 1–2 d | §5 testing |
 | G6 | ✅ APH rate card for demands (Table 1.4) | **P1** | 0.5–1 d | §1 background |
 | G7 | ✅ PDF export + print stylesheet | **P1** | 1 d | §2.2 reporting |
-| G8 | Region heatmap (region × status) | **P1** | 0.5–1 d | §2.2 analytics |
+| G8 | ✅ Region heatmap (region × status) | **P1** | 0.5–1 d | §2.2 analytics |
 | G9 | Read-only Auditor role | **P1** | 0.5 d | §3 roles |
 | G10 | Amount-threshold second approval for releases | **P1** | 1 d | §2.3 dynamic approvals |
 | G11 | MFA (TOTP) for officials | **P1** | 1 d | §4 security |
@@ -28,15 +30,15 @@ This document lists only changes **worth implementing**, ordered by demo/complia
 | G13 | Retention & archival policy + export job | **P2** | 1–2 d | §4 retention |
 | G14 | SMS channel for alerts | **P2** | 1 d | §2.2 alerts |
 
-**Quick wins (< 0.5 d each):** QW2–QW4 at the end of this document (QW1 shipped, see §5).
+**Quick wins (< 0.5 d each):** QW3–QW4 at the end of this document (QW1–QW2 shipped, see §5).
 
 **Explicitly deferred:** OCR/ML, blockchain, chatbot, native mobile app, Aadhaar eSign, payment rails. Rationale in §6.
 
 ---
 
-## 2. P0 — implement before the next demo
+## 2. P0 — implement before the next demo (G5 is the only open item)
 
-### G1. Release clearance workflow (Grievance / Vigilance / PGRC)
+### ✅ G1. Release clearance workflow (Grievance / Vigilance / PGRC) — shipped
 
 **Why.** The spec makes this mandatory: release must enforce "clearances by PGRC/Vigilance, issuance of NOC" (§2.1, §3C). Today one reviewer can approve a release end to end — the single largest *mandatory* gap.
 
@@ -81,7 +83,7 @@ This document lists only changes **worth implementing**, ordered by demo/complia
 
 ---
 
-### G2. Automated refund / penalty calculator
+### ✅ G2. Automated refund / penalty calculator — shipped
 
 **Why.** The spec lists an "Automated Refund Calculator" and explicitly calls out 10% penalty scenarios (§2.3, §8). This is cheap, deterministic rules work with high demo value.
 
@@ -111,7 +113,7 @@ This document lists only changes **worth implementing**, ordered by demo/complia
 
 ---
 
-### G3. Pluggable bank verification adapter (mock-first)
+### ✅ G3. Pluggable bank verification adapter (mock-first) — shipped
 
 **Why.** "Bank API Verification" is the spec's headline innovation (§2.3, §3A). Today it is a manual enum + reference (`set_bank_check`, `init.sql:952-969`). A mock adapter makes the feature real in the product flow without waiting on bank partnerships.
 
@@ -143,7 +145,7 @@ This document lists only changes **worth implementing**, ordered by demo/complia
 
 ---
 
-### G4. KPI instrumentation
+### ✅ G4. KPI instrumentation — shipped
 
 **Why.** The spec defines measurable success criteria (§5): submission→verification under 1 hour, 95% renewal compliance, 100% auditability. The portal currently surfaces counts but not these rates.
 
@@ -171,7 +173,7 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 
 ---
 
-### G5. Regression + E2E tests for the new behaviour
+### G5. Regression + E2E tests for the new behaviour — open
 
 **Why.** The existing PGlite suite is strong but only covers what was built before this list. Every P0 item above must be provable.
 
@@ -189,9 +191,9 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 
 ---
 
-## 3. P1 — worth doing next
+## 3. P1 — worth doing next (open items)
 
-### G6. APH rate card for demands
+### ✅ G6. APH rate card for demands — shipped (3 seeded rows)
 
 **Why.** The spec anchors required amounts to APH Table 1.4 (₹15L Engineering Diploma, ₹35L Engineering UG, etc. — §1). Today `deposit_demands.required_amount` is free text, so nothing enforces the schedule.
 
@@ -201,7 +203,7 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 
 **Shipped 2026-10-23.** `20261023170000_aph_rate_card.sql` adds `aph_deposit_rates` (programme key, level, label, amount, effective window, source note; officials read it, only the service role maintains it), `deposit_demands.aph_rate_id` / `override_note`, and extends `demands_before_write()`: a demand priced from a card row must use that amount, or carry an override note, which the audit trigger records as `APH override: …`. The demand form picks a card row (pre-filling programme and amount), shows the rate source and effective date, and reveals a required reason when the amount is edited away from the card. Only the three Engineering & Technology rows quoted in the proposal are seeded — the rest still needs transcribing from the current APH edition. `db:verify` covers the scoped read, the accepted card amount, the rejected mismatch, the noted override and the audit entry.
 
-### G7. PDF export + print stylesheet
+### ✅ G7. PDF export + print stylesheet — shipped
 
 **Why.** Spec asks for Excel/PDF export (§2.2). Only CSV exists (`src/app/api/reports/[report]/route.ts`).
 
@@ -211,7 +213,7 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 
 **Shipped 2026-10-23.** `globals.css` adds a `@media print` block (`size: A4`, sidebar/pills/actions and all forms removed, repeating table headers, no shadows) plus a `.print-only` header. `PrintButton` + `logPrintExport()` add **Print / Save as PDF** to `/reports` and the deposit and release pages, writing the export to the audit trail as `report.export` (`PDF · …`) before opening the browser dialog. No PDF dependency: the browser's own engine produces the file, and the report's existing totals row prints with the table. Page numbers are the browser's header/footer setting, not a CSS feature.
 
-### G8. Region heatmap
+### ✅ G8. Region heatmap — shipped (page-side aggregation)
 
 **Why.** Spec asks for a heatmap of deposit status by region (§2.2). The dashboard shows a plain table plus a bar chart.
 
@@ -221,7 +223,7 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 
 **Shipped 2026-10-23, without the RPC.** `region-heatmap.tsx` renders an SVG grid (cell counts printed inside, so it reads without colour) from the existing scoped `deposit_overview` rows the dashboard already pages through; each cell links to `/deposits?region=…&status=…`. Because the aggregation happens in the page, counts are exact only up to the paging cap (~5k rows) — the `region_status_matrix()` RPC stays the fix for a full register.
 
-### G9. Read-only Auditor role
+### G9. Read-only Auditor role — open
 
 **Why.** Spec defines "Auditors/External Reviewers (read-only)" (§3). Currently `/audit` is visible to every authenticated user (scoped), and there is no read-only persona.
 
@@ -229,7 +231,7 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 
 **Acceptance.** Auditor can read deposits, documents, reports, audit; every write RPC raises. **Effort.** 0.5 day.
 
-### G10. Amount-threshold second approval for releases
+### G10. Amount-threshold second approval for releases — open
 
 **Why.** Spec's "Dynamic Role-Based Approvals": above a threshold, a higher authority must approve (§2.3).
 
@@ -237,7 +239,7 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 
 **Acceptance.** Releases ≥ threshold cannot reach `approved` on one signature; below threshold unchanged; both signatures audited. **Effort.** 1 day.
 
-### G11. MFA (TOTP) for officials
+### G11. MFA (TOTP) for officials — open
 
 **Why.** Spec asks for "strong authentication (ideally MFA)" (§4). Not implemented.
 
@@ -245,7 +247,7 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 
 **Acceptance.** Official without AAL2 is redirected to enrolment; institute users unaffected; disable/re-enrol works. **Effort.** 1 day. **Note.** Cannot be covered by PGlite; verify manually in a staging project.
 
-### G12. Bulk / drag-drop document upload
+### G12. Bulk / drag-drop document upload — open
 
 **Why.** Spec asks for "bulk or drag-drop upload" (§2.2).
 
@@ -255,7 +257,7 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 
 ---
 
-## 4. P2 — only if time allows
+## 4. P2 — only if time allows (open items)
 
 - **G13. Retention & archival.** Define the retention policy (e.g. 10 years past maturity), add `archived_at`/read-only archive export to object storage, and a documented restore path. Prefer non-destructive archival over deletion. 1–2 days.
 - **G14. SMS channel.** Add a `channel` column to `notifications` and a provider adapter (MSG91/Twilio) with opt-in per institution contact; reuse the cron loop. 1 day.
@@ -270,10 +272,10 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 |---|---|---|
 | QW1 | ✅ Harden profile provisioning at the DB level | `handle_new_user` cannot see `app_metadata` for admin-created users (GoTrue writes it just after the insert), so the app repaired it by hand in `seed.mjs` and `admin/actions.ts`. `supabase/migrations/20261023120000_profile_app_metadata_sync.sql` adds an `after update of raw_app_meta_data on auth.users` trigger that mirrors role/scope/name into `profiles`, applying only the keys present in `app_metadata` so Supabase's own keys never clobber a portal assignment. `db:verify` covers the late write, the partial update, and the audit row. Shipped 2026-10-23. |
 | QW2 | ✅ Turnaround badge in queues | `AgeBadge` (from `daysSince()`) now shows "Waiting 3d" on the deposits, releases and demands queues and on the dashboard's verification queue, escalating amber at 2 days and red at 5. Shipped 2026-10-23. |
-| QW3 | Trigram indexes | `create extension if not exists pg_trgm; create index ... using gin (institution_name gin_trgm_ops)` on the overview source columns backing ILIKE search. |
-| QW4 | Demo-mode docs | Document `NEXT_PUBLIC_DEMO_MODE=true` in `.env.example` so the login page demo hints appear for reviewers. |
+| QW3 | Trigram indexes (open) | `create extension if not exists pg_trgm; create index ... using gin (institution_name gin_trgm_ops)` on the overview source columns backing ILIKE search. |
+| QW4 | Demo-mode docs (open) | Document `NEXT_PUBLIC_DEMO_MODE=true` in `.env.example` so the login page demo hints appear for reviewers. |
 
-### Shipped 2026-10-24 (no schema change)
+### ✅ Shipped 2026-10-24 (no schema change)
 
 Work that needed no migration, delivered on top of the existing views, RPCs and RLS:
 
@@ -339,26 +341,26 @@ Ship P0 before any judging round; treat P1 as the "completeness" story.
 
 | Spec area | Status | Gap |
 |---|---|---|
-| §2.1 repository | Built | — |
-| §2.1 workflow | Built (3-cell clearance + NOC) | G10 |
+| ✅ §2.1 repository | Built | — |
+| ✅ §2.1 workflow | Built (3-cell clearance + NOC) | G10 |
 | §2.1 secure documents | Partial (e-sign) | G12; eSign deferred |
-| §2.1 audit | Built (non-blockchain) | — (QW1 done) |
+| ✅ §2.1 audit | Built (non-blockchain) | — (QW1 done) |
 | §2.1 RBAC | Partial | G9 |
-| §2.2 dashboard | Built | G4 |
+| ✅ §2.2 dashboard | Built | G4 |
 | §2.2 document mgmt | Partial | G12 |
-| §2.2 search/filter | Built (global search, institution profile, ILIKE) | QW3 |
+| ✅ §2.2 search/filter | Built (global search, institution profile, ILIKE) | QW3 |
 | §2.2 alerts | Partial (no SMS, no auto-escalation) | G14 |
-| §2.2 reporting | Built (CSV on every register + print/PDF) | — |
-| §2.3 bank API | Built (mock adapter + evidence) | — (G3 done) |
+| ✅ §2.2 reporting | Built (CSV on every register + print/PDF) | — |
+| ✅ §2.3 bank API | Built (mock adapter + evidence) | — (G3 done) |
 | §2.3 OCR/ML | Missing | Deferred |
 | §2.3 blockchain | Missing | Deferred (hash anchor option) |
 | §2.3 smart escalation | Partial (ageing visible) | G4 (auto-escalation) |
 | §2.3 dynamic approvals | Missing | G10 |
 | §2.3 mobile/chatbot | Partial | Deferred |
 | §2.3 eSign | Missing | Deferred |
-| §2.3 refund calculator | Built (stored sanction) | — (G2 done) |
+| ✅ §2.3 refund calculator | Built (stored sanction) | — (G2 done) |
 | §3 roles | Partial (clearance cell added) | G9 |
 | §4 security (MFA, retention) | Partial | G11, G13 |
-| §5 KPIs | Built (90-day turnaround, renewal, flag ageing) | — (G4 done) |
+| ✅ §5 KPIs | Built (90-day turnaround, renewal, flag ageing) | — (G4 done) |
 | §5 testing | Partial | G5 |
 | §6 roadmap Bank/E-Pay | Missing | Deferred |
