@@ -44,9 +44,14 @@ export function ValidityBadge({ validity, days }: { validity: Validity | null; d
 }
 
 export function ReleaseStatusBadge({ status }: { status: ReleaseStatus }) {
-  const tone: Tone = { draft: "slate", submitted: "blue", approved: "green", rejected: "red", withdrawn: "slate" }[
-    status
-  ] as Tone;
+  const tone: Tone = {
+    draft: "slate",
+    submitted: "blue",
+    pending_second_approval: "amber",
+    approved: "green",
+    rejected: "red",
+    withdrawn: "slate",
+  }[status] as Tone;
   return <Badge tone={tone}>{RELEASE_STATUS_LABELS[status]}</Badge>;
 }
 

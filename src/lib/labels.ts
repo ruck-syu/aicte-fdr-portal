@@ -18,6 +18,7 @@ export const ROLE_LABELS: Record<AppRole, string> = {
   regional_officer: "Regional Officer",
   aicte_verifier: "AICTE Verifier",
   release_officer: "Release Clearance Officer",
+  auditor: "Auditor (read-only)",
   admin: "Administrator",
 };
 
@@ -95,6 +96,7 @@ export const DOCUMENT_LABELS: Record<DocumentType, string> = {
 export const RELEASE_STATUS_LABELS: Record<ReleaseStatus, string> = {
   draft: "Draft",
   submitted: "Under review",
+  pending_second_approval: "Second approval due",
   approved: "Approved",
   rejected: "Rejected",
   withdrawn: "Withdrawn",

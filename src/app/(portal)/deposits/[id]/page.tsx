@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AlertTriangle, CheckCircle2, CircleAlert, FileText, History, Pencil, RefreshCw } from "lucide-react";
-import { requireUser, isOfficial } from "@/lib/auth";
+import { requireUser, isReadOnly, isReviewer } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { describeAudit } from "@/lib/audit";
 import { daysLabel, displayName, formatBytes, formatDate, formatDateTime, formatINR } from "@/lib/format";
@@ -49,7 +49,6 @@ type FlagRow = Discrepancy & { raiser: { full_name: string | null; email: string
 export default async function DepositPage({ params, searchParams }: PageProps<"/deposits/[id]">) {
   const [{ id }, sp] = await Promise.all([params, searchParams]);
   const user = await requireUser();
-  const official = isOfficial(user.role);
   const supabase = await createClient();
 
   const { data: depositData } = await supabase.from("deposit_overview").select("*").eq("id", id).maybeSingle();
@@ -120,7 +119,7 @@ export default async function DepositPage({ params, searchParams }: PageProps<"/
   const blockers = checks.filter((c) => c.severity === "blocker");
   const openFlags = flags.filter((f) => !f.resolved_at);
   const openErrors = openFlags.filter((f) => f.severity === "error");
-  const canReview = official && d.status === "submitted";
+  const canReview = isReviewer(user.role) && d.status === "submitted";
   const activeRenewal = successors.find((s) => !["rejected", "replaced"].includes(s.status));
   const canRenew = isOwner && ["verified", "release_requested"].includes(d.status) && !activeRenewal;
   const openRelease = releases.find((r) => r.status === "draft" || r.status === "submitted");
@@ -379,20 +378,24 @@ export default async function DepositPage({ params, searchParams }: PageProps<"/
                 ))}
               </ul>
             )}
-            {(editable || (official && d.status === "submitted")) && (
+            {(editable || (canReview && d.status === "submitted")) && (
               <div className="border-t border-slate-100 p-5">
                 <DocumentUploader
                   institutionId={d.institution_id}
                   depositId={d.id}
-                  docTypes={official ? ["bank_certificate", "other"] : docTypes}
-                  defaultType={official ? "bank_certificate" : (missingDocs[0] ?? docTypes[0])}
+                  docTypes={isReviewer(user.role) ? ["bank_certificate", "other"] : docTypes}
+                  defaultType={isReviewer(user.role) ? "bank_certificate" : (missingDocs[0] ?? docTypes[0])}
                 />
               </div>
             )}
           </Card>
 
           <Card title="Comments" description="Visible to the institution and reviewing officials">
-            <CommentThread comments={comments} depositId={d.id} canComment={d.status !== "released"} />
+            <CommentThread
+              comments={comments}
+              depositId={d.id}
+              canComment={!isReadOnly(user.role) && d.status !== "released"}
+            />
           </Card>
         </div>
 
@@ -442,7 +445,7 @@ export default async function DepositPage({ params, searchParams }: PageProps<"/
             </Card>
           )}
 
-          {official && !["draft", "rejected", "released", "replaced"].includes(d.status) && (
+          {isReviewer(user.role) && !["draft", "rejected", "released", "replaced"].includes(d.status) && (
             <Card title="Bank verification" description="Ask the configured bank verifier, or record a confirmation manually">
               {["submitted", "discrepancy"].includes(d.status) && (
                 <div className="mb-4 rounded-md border border-slate-200 bg-slate-50/60 p-3">

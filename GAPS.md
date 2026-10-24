@@ -3,7 +3,7 @@
 **Source spec:** `Executive Summary.pdf` (AICTE Security Deposit/FDR Management Portal — SIH proposal)
 **Codebase:** `aicte-fdr-portal` @ `main` (no commits yet)
 **Analysis date:** 2026-10-23
-**Current alignment:** ~70% overall — ~85% mandatory/compliance, ~80% common, ~15% innovative.
+**Current alignment:** ~76% overall — ~90% mandatory/compliance, ~85% common, ~15% innovative.
 
 **Legend:** ✅ = shipped and verified (`npm run db:verify` covers it where it is testable). An item with no tick is still open.
 
@@ -19,14 +19,14 @@ This document lists only changes **worth implementing**, ordered by demo/complia
 | G2 | ✅ Automated refund / penalty calculator | **P0** | 1–1.5 d | §2.3, §8 penalty |
 | G3 | ✅ Pluggable bank verification adapter (mock-first) | **P0** | 1–2 d | §2.3 bank API, §3A |
 | G4 | ✅ KPI instrumentation (turnaround, renewal compliance, flag ageing) | **P0** | 0.5–1 d | §5 KPIs |
-| G5 | Regression + E2E tests for the above | **P0** | 1–2 d | §5 testing |
+| G5 | Browser E2E tests (SQL regression + `npm run check` shipped) | **P0** | 0.5–1 d | §5 testing |
 | G6 | ✅ APH rate card for demands (Table 1.4) | **P1** | 0.5–1 d | §1 background |
 | G7 | ✅ PDF export + print stylesheet | **P1** | 1 d | §2.2 reporting |
 | G8 | ✅ Region heatmap (region × status) | **P1** | 0.5–1 d | §2.2 analytics |
-| G9 | Read-only Auditor role | **P1** | 0.5 d | §3 roles |
-| G10 | Amount-threshold second approval for releases | **P1** | 1 d | §2.3 dynamic approvals |
+| G9 | ✅ Read-only Auditor role | **P1** | 0.5 d | §3 roles |
+| G10 | ✅ Amount-threshold second approval for releases | **P1** | 1 d | §2.3 dynamic approvals |
 | G11 | MFA (TOTP) for officials | **P1** | 1 d | §4 security |
-| G12 | Bulk / drag-drop document upload | **P2** | 0.5–1 d | §2.2 documents |
+| G12 | ✅ Bulk / drag-drop document upload | **P2** | 0.5–1 d | §2.2 documents |
 | G13 | Retention & archival policy + export job | **P2** | 1–2 d | §4 retention |
 | G14 | SMS channel for alerts | **P2** | 1 d | §2.2 alerts |
 
@@ -173,7 +173,7 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 
 ---
 
-### G5. Regression + E2E tests for the new behaviour — open
+### G5. Regression + E2E tests for the new behaviour — partly shipped
 
 **Why.** The existing PGlite suite is strong but only covers what was built before this list. Every P0 item above must be provable.
 
@@ -188,6 +188,8 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 **Acceptance.** `npm run check` is green locally; E2E fails loudly if a role can perform an action it shouldn't.
 
 **Effort.** 1–2 days.
+
+**Partly shipped 2026-10-25.** `npm run check` chains `typecheck && lint && db:verify`, so the SQL suite can no longer be skipped. `db:verify` gained a regression section for G9 (the auditor reads every register, clearance note, document and the national audit trail, and is refused by `review_deposit`, `set_bank_check`, `record_clearance`, `decide_release`, `admin_update_profile`, `log_event` and the direct-insert policies). Every earlier item's checks remain in the same run — 29 assertions total. **Still open:** the Playwright browser flow (login → create user → register → verify → release → clearances → approve), which needs a live seeded project and a browser in CI, neither of which this repo has.
 
 ---
 
@@ -223,7 +225,7 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 
 **Shipped 2026-10-23, without the RPC.** `region-heatmap.tsx` renders an SVG grid (cell counts printed inside, so it reads without colour) from the existing scoped `deposit_overview` rows the dashboard already pages through; each cell links to `/deposits?region=…&status=…`. Because the aggregation happens in the page, counts are exact only up to the paging cap (~5k rows) — the `region_status_matrix()` RPC stays the fix for a full register.
 
-### G9. Read-only Auditor role — open
+### ✅ G9. Read-only Auditor role — shipped
 
 **Why.** Spec defines "Auditors/External Reviewers (read-only)" (§3). Currently `/audit` is visible to every authenticated user (scoped), and there is no read-only persona.
 
@@ -231,13 +233,17 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 
 **Acceptance.** Auditor can read deposits, documents, reports, audit; every write RPC raises. **Effort.** 0.5 day.
 
-### G10. Amount-threshold second approval for releases — open
+**Shipped 2026-10-25.** `20261025000000_auditor_role.sql` adds `auditor` on its own (the enum value cannot be used in the transaction that creates it) and `20261025000001_auditor_scope.sql` adds the role's scope: `can_access_institution()` and `is_official()` include it so every scoped read works unchanged, `is_reviewer()` still excludes it so every workflow function refuses it, and the one direct-insert policy that keyed on `can_access_institution()` alone — comments — now carries a `is_read_only()` guard. The auditor also reads the national audit trail, including the session events that carry no institution and are otherwise administrator-only. `ROLE_LABELS`, the role picker, the sidebar, reports and the demo seed carry the new role; the deposit and release pages hide the verify/decide/upload/comment controls from it instead of showing buttons that the server would reject. `db:verify` proves the reads and each refusal.
+
+### ✅ G10. Amount-threshold second approval for releases — shipped
 
 **Why.** Spec's "Dynamic Role-Based Approvals": above a threshold, a higher authority must approve (§2.3).
 
 **Change.** `app_settings.release_second_approval_threshold numeric default 1000000`; add `pending_second_approval` to `release_status`; first approval by a reviewer, second by `aicte_verifier`/admin; both recorded with notes. Show the required approver level on the release page.
 
 **Acceptance.** Releases ≥ threshold cannot reach `approved` on one signature; below threshold unchanged; both signatures audited. **Effort.** 1 day.
+
+**Shipped 2026-10-24.** `20261024000000_second_approval_status.sql` adds `pending_second_approval` on its own (a new enum value cannot be used in the transaction that creates it) and `20261024000001_second_approval.sql` adds the settings threshold (default ₹10,00,000, editable under **Admin → Settings**), `release_requests.first_approved_by / _at / _note`, and a two-stage `decide_release()`: at or above the threshold the first approval parks the request with its NOC and refund quote frozen, and the second must come from an `aicte_verifier` or administrator who is not the officer who signed first, with a recorded note. The release page shows who approved first, what is still required, and only offers **Give second approval** to an eligible, different officer; the list badges the status and its waiting time, the pending-releases report includes both stages, and `dashboard_stats()` counts parked releases in `release_pending` with a separate `release_second_approval`. `db:verify` asserts the below-threshold single-signature path, the first-signature park, rejection of a regional officer and of the same officer, the required note, the frozen quote surviving the second signature, the release itself, and both status-change audit rows.
 
 ### G11. MFA (TOTP) for officials — open
 
@@ -247,13 +253,15 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 
 **Acceptance.** Official without AAL2 is redirected to enrolment; institute users unaffected; disable/re-enrol works. **Effort.** 1 day. **Note.** Cannot be covered by PGlite; verify manually in a staging project.
 
-### G12. Bulk / drag-drop document upload — open
+### ✅ G12. Bulk / drag-drop document upload — shipped
 
 **Why.** Spec asks for "bulk or drag-drop upload" (§2.2).
 
 **Change.** Extend `src/components/document-uploader.tsx` to accept multiple files and a drop zone; upload sequentially with per-file status; keep versioning semantics (one version bump per doc type, earlier file retained); clean up storage objects on metadata failure (already done for single file).
 
 **Acceptance.** 5 files in one gesture; one failed upload does not abort the rest; versions and audit rows correct. **Effort.** 0.5–1 day.
+
+**Shipped 2026-10-25.** The uploader stages a batch instead of sending it file by file on arrival: the picker and the drop zone add rows, each row keeps its own document type (editable before upload, since one drop often mixes an FDR scan with an affidavit), and a single **Upload N files** sends them sequentially so version numbers stay ordered. A failure marks only that row, names the reason, and leaves the attachment on the file input for a retry — the rest of the batch is unaffected. Invalid files (wrong MIME, over 10 MB) are held as `rejected` rows that never reach storage, with remove buttons on every unfinished row.
 
 ---
 
@@ -342,12 +350,12 @@ Ship P0 before any judging round; treat P1 as the "completeness" story.
 | Spec area | Status | Gap |
 |---|---|---|
 | ✅ §2.1 repository | Built | — |
-| ✅ §2.1 workflow | Built (3-cell clearance + NOC) | G10 |
+| ✅ §2.1 workflow | Built (3-cell clearance + NOC + threshold approval) | — (G10 done) |
 | §2.1 secure documents | Partial (e-sign) | G12; eSign deferred |
 | ✅ §2.1 audit | Built (non-blockchain) | — (QW1 done) |
-| §2.1 RBAC | Partial | G9 |
+| ✅ §2.1 RBAC | Built (auditor is read-only, enforced in RLS) | — (G9 done) |
 | ✅ §2.2 dashboard | Built | G4 |
-| §2.2 document mgmt | Partial | G12 |
+| ✅ §2.2 document mgmt | Built (staged bulk upload, per-file type, retry) | — (G12 done) |
 | ✅ §2.2 search/filter | Built (global search, institution profile, ILIKE) | QW3 |
 | §2.2 alerts | Partial (no SMS, no auto-escalation) | G14 |
 | ✅ §2.2 reporting | Built (CSV on every register + print/PDF) | — |
@@ -355,12 +363,12 @@ Ship P0 before any judging round; treat P1 as the "completeness" story.
 | §2.3 OCR/ML | Missing | Deferred |
 | §2.3 blockchain | Missing | Deferred (hash anchor option) |
 | §2.3 smart escalation | Partial (ageing visible) | G4 (auto-escalation) |
-| §2.3 dynamic approvals | Missing | G10 |
+| ✅ §2.3 dynamic approvals | Built (two signatures at or above the threshold) | — (G10 done) |
 | §2.3 mobile/chatbot | Partial | Deferred |
 | §2.3 eSign | Missing | Deferred |
 | ✅ §2.3 refund calculator | Built (stored sanction) | — (G2 done) |
-| §3 roles | Partial (clearance cell added) | G9 |
+| ✅ §3 roles | Built (4 operational roles + clearance officer + read-only auditor) | — (G9 done) |
 | §4 security (MFA, retention) | Partial | G11, G13 |
 | ✅ §5 KPIs | Built (90-day turnaround, renewal, flag ageing) | — (G4 done) |
-| §5 testing | Partial | G5 |
+| §5 testing | Partial (SQL regression + `npm run check`; no browser E2E) | G5 |
 | §6 roadmap Bank/E-Pay | Missing | Deferred |

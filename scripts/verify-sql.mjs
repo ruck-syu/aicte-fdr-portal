@@ -95,6 +95,7 @@ const roSouthWest = await user("ro.sw@x", { role: "regional_officer", region: "s
 const grievance = await user("grievance@x", { role: "release_officer", clearance_cell: "grievance" });
 const vigilance = await user("vigilance@x", { role: "release_officer", clearance_cell: "vigilance" });
 const pgrc = await user("pgrc@x", { role: "release_officer", clearance_cell: "pgrc" });
+const auditor = await user("auditor@x", { role: "auditor" });
 const userA = await user("a@x", { role: "institute_user", institution_id: instA });
 const userB = await user("b@x", { role: "institute_user", institution_id: instB });
 const sneaky = (await one(`insert into auth.users (email, raw_user_meta_data)
@@ -338,6 +339,64 @@ assert.equal((await one(`select status, noc_reference, decided_by from release_r
 assert.equal((await one(`select status from deposits where id = $1`, [ovDep])).status, "released");
 ok("clearance override: administrator approval of a blocked cell recorded with a note + NOC");
 
+// --- two-step approval above the threshold (G10) -----------------------------
+// The default threshold is ₹10,00,000. Every release above is below it and was
+// decided by a single signature; this deposit is not.
+assert.equal((await one(`select first_approved_by from release_requests where id = $1`, [rr])).first_approved_by, null);
+
+const bigDep = (await one(`insert into deposits
+  (institution_id, instrument_number, bank_name, amount, issue_date, maturity_date, status, verified_at)
+  values ($1, 'FDR-SECOND', 'Punjab National Bank', 2500000, current_date - 400, current_date + 900, 'verified', now())
+  returning id`, [instA])).id;
+const bigRr = (await as(userA, () => one(`select create_release_request($1, 'course_closure', 'Programme closed') as id`, [bigDep]))).id;
+for (const t of ["release_letter", "affidavit"]) {
+  await as(userA, () => q(`insert into deposit_documents (release_request_id, doc_type, storage_path, file_name, institution_id)
+    values ($1, $2, $3, 'f.pdf', $4)`, [bigRr, t, `${instA}/releases/${bigRr}/${t}.pdf`, instA]));
+}
+await as(userA, () => q(`select submit_release_request($1)`, [bigRr]));
+for (const [who, cell] of [[grievance, "grievance"], [vigilance, "vigilance"], [pgrc, "pgrc"]]) {
+  await as(who, () => q(`select record_clearance($1, $2, 'cleared')`, [bigRr, cell]));
+}
+
+// first signature: the request parks, with the NOC and quote already frozen
+await as(verifier, () => q(`select decide_release($1, 'approve', 'First-level sanction', 'NOC/AICTE/2026/010')`, [bigRr]));
+const first = await one(`select status, first_approved_by, first_approved_at, first_approved_note,
+  decided_by, decided_at, sanctioned_amount, noc_reference, quote
+  from release_requests where id = $1`, [bigRr]);
+assert.equal(first.status, "pending_second_approval");
+assert.equal(first.first_approved_by, verifier);
+assert.equal(first.first_approved_note, "First-level sanction");
+assert.ok(first.first_approved_at);
+assert.equal(first.decided_by, null);
+assert.equal(first.decided_at, null);
+assert.equal(first.sanctioned_amount, null);
+assert.equal(first.noc_reference, "NOC/AICTE/2026/010");
+assert.ok(Number(first.quote.net_payable) >= 1000000);
+assert.equal((await one(`select status from deposits where id = $1`, [bigDep])).status, "release_requested");
+
+// a regional officer cannot sign second, an officer cannot sign twice, and the
+// second signature requires a note
+await as(roNorth, () => fails(q(`select decide_release($1, 'approve', 'Second approval')`, [bigRr]), /AICTE verifier/));
+await as(verifier, () => fails(q(`select decide_release($1, 'approve', 'Second approval')`, [bigRr]), /cannot also give the second/));
+await as(admin, () => fails(q(`select decide_release($1, 'approve')`, [bigRr]), /note is required/));
+
+await as(admin, () => q(`select decide_release($1, 'approve', 'Board note: amount and NOC verified')`, [bigRr]));
+const second = await one(`select status, decided_by, sanctioned_amount, noc_reference, first_approved_by
+  from release_requests where id = $1`, [bigRr]);
+assert.equal(second.status, "approved");
+assert.equal(second.decided_by, admin);
+assert.equal(second.first_approved_by, verifier);
+assert.equal(Number(second.sanctioned_amount), Number(first.quote.net_payable));
+assert.equal(second.noc_reference, "NOC/AICTE/2026/010");
+assert.equal((await one(`select status from deposits where id = $1`, [bigDep])).status, "released");
+
+const approvals = await q(`select changes->'status'->>'to' as to_status from audit_logs
+  where entity_type = 'release_requests' and entity_id = $1
+    and changes->'status'->>'to' in ('pending_second_approval', 'approved')
+  order by id`, [bigRr]);
+assert.deepEqual(approvals.map((a) => a.to_status), ["pending_second_approval", "approved"]);
+ok("second approval: above the threshold the first signature parks the release, a different verifier signs second, quote frozen");
+
 // --- refund / penalty quote (G2) ---------------------------------------------
 const quoteDep = (await as(userA, () => one(`insert into deposits
   (institution_id, instrument_number, bank_name, amount, interest_rate, issue_date, maturity_date)
@@ -445,7 +504,7 @@ const roSwView = await as(roSouthWest, () => q(`select id from deposit_overview`
 assert.equal(roSwView.length, 0);
 const stats = await as(verifier, () => one(`select dashboard_stats() as s`));
 assert.equal(stats.s.held_count, 1);
-assert.equal(stats.s.released_value, 800000); // main release + administrator override
+assert.equal(stats.s.released_value, 3300000); // main + administrator override + above-threshold release
 const statsB = await as(userB, () => one(`select dashboard_stats() as s`));
 assert.equal(statsB.s.released_value, 0);
 ok("dashboard stats and overview views respect scope");
@@ -537,5 +596,35 @@ const unread = (await as(userA, () => one(`select unread_notification_count() n`
 await as(userA, () => q(`select mark_notifications_read()`));
 assert.equal((await as(userA, () => one(`select unread_notification_count() n`))).n, 0);
 ok(`notification feeds split by audience (institute ${feedA.length}, officer ${feedRO.length}); ${unread} marked read`);
+
+// --- G9: read-only auditor ---------------------------------------------------
+// The auditor reads the whole register, the clearance notes and the national
+// audit trail, and every write path refuses it.
+assert.equal((await one(`select role from profiles where id = $1`, [auditor])).role, "auditor");
+assert.equal((await as(auditor, () => one(`select is_read_only() r`))).r, true);
+const audDeposits = await as(auditor, () => q(`select id from deposits`));
+assert.ok(audDeposits.length >= 3, `auditor should read every deposit, got ${audDeposits.length}`);
+assert.ok((await as(auditor, () => q(`select id from release_clearances`))).length >= 6);
+const audNote = await as(auditor, () => q(`select note from release_clearances where release_request_id = $1 and cell = 'grievance'`, [rr]));
+assert.equal(audNote[0].note, "Enquiry closed; no dues");
+assert.equal((await as(auditor, () => q(`select id from storage.objects`))).length, 1);
+// Session events carry no institution, so only admins and auditors see them.
+assert.ok((await as(auditor, () => q(`select id from audit_logs where institution_id is null`))).length > 0);
+assert.equal((await as(verifier, () => q(`select id from audit_logs where institution_id is null`))).length, 0);
+
+await as(auditor, () => fails(q(`select review_deposit($1, 'verify')`, [dep.id]), /Deposit not found/));
+await as(auditor, () => fails(q(`select set_bank_check($1, 'confirmed', 'X')`, [dep.id]), /Deposit not found/));
+await as(auditor, () => fails(q(`select record_clearance($1, 'grievance', 'cleared')`, [ovRr]), /clearance cell officer/));
+await as(auditor, () => fails(q(`select decide_release($1, 'approve', 'x', 'NOC/1')`, [ovRr]), /Release request not found/));
+await as(auditor, () => fails(q(`select admin_update_profile($1, 'admin', null, null, 'x', null, true)`, [auditor]), /Only administrators/));
+await as(auditor, () => fails(q(`select log_event('user.create', 'x')`), /Not allowed/));
+await as(auditor, () =>
+  fails(q(`insert into deposits (institution_id, instrument_type, instrument_number, bank_name, amount, issue_date, maturity_date)
+    values ($1, 'fdr', 'AUD-1', 'Bank', 100000, current_date, current_date + 365)`, [instA]), /row-level security/));
+await as(auditor, () =>
+  fails(q(`insert into comments (deposit_id, institution_id, body) values ($1, $2, 'auditor note')`, [dep.id, instA]), /row-level security/));
+await as(auditor, () =>
+  fails(q(`insert into storage.objects (bucket_id, name, owner_id) values ('deposit-documents', $1, $2)`, [`${instA}/auditor/x.pdf`, auditor]), /row-level security/));
+ok("auditor: reads every register, clearance notes, documents and the national audit trail; every write is refused");
 
 console.log("\nAll database checks passed.");
