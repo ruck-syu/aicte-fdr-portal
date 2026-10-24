@@ -35,6 +35,7 @@ import {
   requestRelease,
   resolveDiscrepancy,
   reviewDeposit,
+  setArchived,
   setBankCheck,
   submitDeposit,
   verifyWithBank,
@@ -181,6 +182,12 @@ export default async function DepositPage({ params, searchParams }: PageProps<"/
       />
 
       <div className="space-y-3">
+        {d.archived_at && (
+          <Alert tone="blue" title="Archived record">
+            This deposit passed its retention window and was archived on {formatDate(d.archived_at)}. It stays readable as
+            evidence; an administrator can restore it if it has to change again.
+          </Alert>
+        )}
         {sp.created && (
           <Alert tone="green" title="Draft saved">
             Upload the required documents below, then submit the deposit for verification.
@@ -400,6 +407,25 @@ export default async function DepositPage({ params, searchParams }: PageProps<"/
         </div>
 
         <div className="space-y-6">
+          {user.role === "admin" &&
+            (d.archived_at || ["released", "replaced", "rejected"].includes(d.status)) && (
+              <Card
+                title={d.archived_at ? "Archived record" : "Retention & archival"}
+                description={
+                  d.archived_at
+                    ? "The record is frozen and readable. Restore it only if the evidence has to change."
+                    : "Freeze this settled record. Nothing is deleted; the audit trail keeps it reachable."
+                }
+              >
+                <ActionForm action={setArchived} hideOk>
+                  <input type="hidden" name="id" value={d.id} />
+                  <input type="hidden" name="archived" value={d.archived_at ? "false" : "true"} />
+                  <SubmitButton variant={d.archived_at ? "secondary" : "primary"} size="sm">
+                    {d.archived_at ? "Restore record" : "Archive record"}
+                  </SubmitButton>
+                </ActionForm>
+              </Card>
+            )}
           {canReview && (
             <Card title="Verification decision" className="border-brand-200 ring-1 ring-brand-100">
               <ActionForm action={reviewDeposit} className="space-y-3">

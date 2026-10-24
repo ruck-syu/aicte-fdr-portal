@@ -76,6 +76,8 @@ export interface Institution {
   address: string | null;
   contact_email: string | null;
   contact_phone: string | null;
+  /** The institution agreed to receive warning / critical alerts by SMS. */
+  sms_opt_in: boolean;
 }
 
 export interface Deposit {
@@ -107,6 +109,8 @@ export interface Deposit {
   verified_at: string | null;
   verified_by: string | null;
   released_at: string | null;
+  /** Set when the record has been archived past its retention window. */
+  archived_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -322,6 +326,8 @@ export interface AppSettings {
   default_interest_rate: number;
   /** Net payable at or above this amount needs a second signature. */
   release_second_approval_threshold: number;
+  /** Years after maturity before a settled deposit becomes archival due. */
+  retention_years: number;
 }
 
 export interface DashboardStats {

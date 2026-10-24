@@ -120,6 +120,25 @@ export default async function SettingsPage() {
             </Field>
           </div>
         </Card>
+        <Card
+          title="Retention & archival"
+          description="Settled deposits become archival due this many years after maturity. Archiving never deletes a record: it freezes it, and an administrator can restore it."
+        >
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Field label="Retention window (years)" htmlFor="retention_years" hint="Measured from the maturity date">
+              <input
+                id="retention_years"
+                name="retention_years"
+                type="number"
+                min={1}
+                max={50}
+                step={1}
+                defaultValue={s.retention_years}
+                className="input"
+              />
+            </Field>
+          </div>
+        </Card>
         <Card title="Mandatory documents for a deposit" description="A deposit cannot be submitted for verification without these.">
           <DocChecklist name="required_documents" selected={s.required_documents} />
         </Card>

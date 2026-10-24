@@ -128,10 +128,13 @@ export async function saveInstitution(_: ActionState, formData: FormData): Promi
   const parsed = institutionSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: parsed.error.issues[0]?.message };
   const id = formData.get("id");
+  // A checkbox is absent when unchecked, so it is read here rather than coerced
+  // by the schema (which also parses CSV rows as text).
+  const data = { ...parsed.data, sms_opt_in: formData.get("sms_opt_in") === "on" };
   const supabase = await createClient();
   const { error } = id
-    ? await supabase.from("institutions").update(parsed.data).eq("id", String(id))
-    : await supabase.from("institutions").insert(parsed.data);
+    ? await supabase.from("institutions").update(data).eq("id", String(id))
+    : await supabase.from("institutions").insert(data);
   if (error) return { error: friendlyError(error) };
   refresh();
   return { ok: id ? "Institution updated." : `${parsed.data.name} added.` };
@@ -230,6 +233,7 @@ export async function saveSettings(_: ActionState, formData: FormData): Promise<
       early_release_penalty_pct: z.coerce.number().min(0).max(100),
       default_interest_rate: z.coerce.number().min(0).max(50),
       release_second_approval_threshold: z.coerce.number().min(0).max(1e12),
+      retention_years: z.coerce.number().int().min(1).max(50),
       required_documents: z.array(z.enum(docTypes)),
       release_required_documents: z.array(z.enum(docTypes)),
     })
@@ -241,6 +245,7 @@ export async function saveSettings(_: ActionState, formData: FormData): Promise<
       early_release_penalty_pct: formData.get("early_release_penalty_pct"),
       default_interest_rate: formData.get("default_interest_rate"),
       release_second_approval_threshold: formData.get("release_second_approval_threshold"),
+      retention_years: formData.get("retention_years"),
       required_documents: formData.getAll("required_documents"),
       release_required_documents: formData.getAll("release_required_documents"),
     });

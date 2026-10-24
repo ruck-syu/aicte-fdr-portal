@@ -271,6 +271,19 @@ export async function addComment(_: ActionState, formData: FormData): Promise<Ac
   return { ok: "Comment added." };
 }
 
+/** G13: freeze or reopen a settled record. Admin only, enforced again in SQL. */
+export async function setArchived(_: ActionState, formData: FormData): Promise<ActionState> {
+  await requireRole("admin");
+  const supabase = await createClient();
+  const archive = formData.get("archived") === "true";
+  const { error } = await supabase.rpc(archive ? "archive_deposit" : "unarchive_deposit", {
+    p_id: String(formData.get("id")),
+  });
+  if (error) return { error: friendlyError(error) };
+  refresh();
+  return { ok: archive ? "Record archived." : "Record restored." };
+}
+
 export async function requestRelease(_: ActionState, formData: FormData): Promise<ActionState> {
   await requireRole("institute_user");
   const supabase = await createClient();
