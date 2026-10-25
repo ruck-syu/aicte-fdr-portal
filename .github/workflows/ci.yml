@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# One run per branch: a new push cancels the previous, unfinished run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Typecheck, lint and database tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # typecheck + lint + db:verify (PGlite). No network, no browser.
+      - run: npm run check
+
+  demo-credentials:
+    name: Check for the demo project
+    runs-on: ubuntu-latest
+    outputs:
+      available: ${{ steps.check.outputs.available }}
+    steps:
+      - id: check
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_KEY" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Browser tests skipped"
+              echo ""
+              echo "Add these repository secrets, pointing at a seeded demo project,"
+              echo "to run the Playwright suite:"
+              echo ""
+              echo "- \`NEXT_PUBLIC_SUPABASE_URL\`"
+              echo "- \`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY\`"
+              echo "- \`SUPABASE_SECRET_KEY\`"
+              echo ""
+              echo "See *Browser tests* in the README."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  e2e:
+    name: Browser tests
+    needs: demo-credentials
+    if: needs.demo-credentials.outputs.available == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # The suite signs in to one shared demo project, so runs queue instead of
+    # overlapping and tripping Supabase's sign-in rate limit.
+    concurrency:
+      group: e2e-demo-project
+      cancel-in-progress: false
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      # Builds, serves on port 3100 and drives the suite (see playwright.config.ts).
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+          retention-days: 7
