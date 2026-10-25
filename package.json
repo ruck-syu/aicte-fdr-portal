@@ -10,6 +10,8 @@
     "typecheck": "next typegen && tsc --noEmit",
     "db:verify": "node scripts/verify-sql.mjs",
     "check": "npm run typecheck && npm run lint && npm run db:verify",
+    "test:e2e": "playwright test",
+    "check:all": "npm run check && npm run test:e2e",
     "seed": "node --env-file-if-exists=.env.local scripts/seed.mjs"
   },
   "dependencies": {
@@ -26,6 +28,7 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.11",
+    "@playwright/test": "^1.64.1",
     "@tailwindcss/turbopack": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
