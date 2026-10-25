@@ -55,6 +55,11 @@ export async function GET(request: NextRequest) {
   const { data: created, error } = await admin.rpc("run_alerts");
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+  // Reconcile the escalation desk with the register: open a case for every
+  // instrument that stayed lapsed, close the ones that were renewed or released.
+  const { data: escalations, error: escalationError } = await admin.rpc("sync_escalations");
+  if (escalationError) return NextResponse.json({ error: escalationError.message }, { status: 500 });
+
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.ALERT_FROM_EMAIL;
   let emailed = 0;
@@ -166,6 +171,7 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     created,
+    escalations,
     emailed,
     pending,
     email: apiKey && from ? "enabled" : "disabled",

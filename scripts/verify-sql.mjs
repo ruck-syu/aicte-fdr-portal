@@ -59,7 +59,10 @@ let step = 0;
 const ok = (msg) => console.log(`✓ ${String(++step).padStart(2, "0")} ${msg}`);
 
 async function as(userId, fn) {
-  await db.exec(`reset role; select set_config('request.jwt.claim.sub', '${userId ?? ""}', false);`);
+  // "service" is the service role, which has no signed-in user: keep the claim
+  // empty so auth.uid() is null rather than the literal string.
+  const sub = userId === "service" ? "" : (userId ?? "");
+  await db.exec(`reset role; select set_config('request.jwt.claim.sub', '${sub}', false);`);
   await db.exec(userId === "service" ? "set role service_role" : "set role authenticated");
   try {
     return await fn();
@@ -697,5 +700,73 @@ const trgm = (await q(`select indexname from pg_indexes where indexname in
   .map((r) => r.indexname);
 assert.equal(trgm.length, 4);
 ok("search: trigram indexes present for institution, instrument, approval case and release reference");
+
+// --- G15: escalation desk for lapsed deposits --------------------------------
+// A deposit that matured 40 days ago is past the 7-day escalation window; one
+// that matured 3 days ago is not. Only the first is escalated.
+const lapsedCase = (await one(`insert into deposits (institution_id, instrument_type, instrument_number, bank_name,
+    amount, issue_date, maturity_date, status)
+  values ($1, 'fdr', 'ESC-40', 'Bank', 100000, current_date - 500, current_date - 40, 'verified') returning id`,
+  [instC])).id;
+const withinWindow = (await one(`insert into deposits (institution_id, instrument_type, instrument_number, bank_name,
+    amount, issue_date, maturity_date, status)
+  values ($1, 'fdr', 'ESC-3', 'Bank', 100000, current_date - 500, current_date - 3, 'verified') returning id`,
+  [instC])).id;
+
+await as("service", () => q(`select sync_escalations()`));
+const escalated = await one(`select e.id, e.days_lapsed, e.acknowledged_at, i.region
+  from deposit_escalations e join institutions i on i.id = e.institution_id
+  where e.deposit_id = $1`, [lapsedCase]);
+assert.equal(escalated.days_lapsed, 40);
+assert.equal(escalated.acknowledged_at, null);
+assert.equal(escalated.region, "eastern");
+assert.equal((await q(`select id from deposit_escalations where deposit_id = $1`, [withinWindow])).length, 0);
+const officerNotice = await one(`select audience, severity from notifications
+  where kind = 'escalation_officer' and deposit_id = $1`, [lapsedCase]);
+assert.deepEqual([officerNotice.audience, officerNotice.severity], ["officials", "critical"]);
+
+// Reconciling is idempotent: the next daily run neither duplicates the case
+// nor re-sends the notice.
+await as("service", () => q(`select sync_escalations()`));
+assert.equal((await one(`select count(*)::int n from deposit_escalations where deposit_id = $1`, [lapsedCase])).n, 1);
+assert.equal((await one(`select days_lapsed from deposit_escalations where deposit_id = $1`, [lapsedCase])).days_lapsed, 40);
+assert.equal((await one(`select count(*)::int n from notifications where kind = 'escalation_officer' and deposit_id = $1`, [lapsedCase])).n, 1);
+
+// Only an official in that region can acknowledge; auditors and institutions read only.
+const esc = escalated.id;
+await as(userA, () => fails(q(`select acknowledge_escalation($1, 'x')`, [esc]), /Only an AICTE official/));
+await as(auditor, () => fails(q(`select acknowledge_escalation($1, 'x')`, [esc]), /Only an AICTE official/));
+await as(roSouthWest, () => fails(q(`select acknowledge_escalation($1, 'x')`, [esc]), /another region/));
+await as(roEast, () => q(`select acknowledge_escalation($1, 'chasing the bank')`, [esc]));
+const acked = await one(`select acknowledged_by, note, acknowledged_at from deposit_escalations where id = $1`, [esc]);
+assert.deepEqual([acked.acknowledged_by, acked.note], [roEast, "chasing the bank"]);
+assert.ok(acked.acknowledged_at);
+assert.ok((await one(`select count(*)::int n from audit_logs
+  where entity_type = 'deposit_escalations' and entity_id = $1`, [esc])).n >= 2);
+
+// Reads follow the institution; writes exist only through the functions.
+assert.ok((await as(roEast, () => q(`select id from deposit_escalations`))).length >= 1);
+assert.equal((await as(roSouthWest, () => q(`select id from deposit_escalations`))).length, 0);
+assert.equal((await as(userA, () => q(`select id from deposit_escalations`))).length, 0);
+// The table grants no write at all, so an officer's insert stops before RLS.
+await as(roEast, () =>
+  fails(q(`insert into deposit_escalations (deposit_id, institution_id, days_lapsed)
+    values ($1, $2, 1)`, [withinWindow, instC]), /permission denied|row-level security/));
+await db.exec("set role anon");
+try {
+  await fails(q(`select sync_escalations()`), /permission denied/);
+} finally {
+  await db.exec("reset role");
+}
+
+// A renewal closes the case, and a closed case cannot be acknowledged again.
+await db.query(`insert into deposits (institution_id, instrument_type, instrument_number, bank_name, amount,
+    issue_date, maturity_date, status, replaces_deposit_id)
+  values ($1, 'fdr', 'ESC-RENEW', 'Bank', 100000, current_date, current_date + 365, 'submitted', $2)`,
+  [instC, lapsedCase]);
+await as("service", () => q(`select sync_escalations()`));
+assert.ok((await one(`select closed_at from deposit_escalations where id = $1`, [esc])).closed_at);
+await as(roEast, () => fails(q(`select acknowledge_escalation($1, 'late')`, [esc]), /already closed/));
+ok("escalations: window opens a case, idempotent, region-scoped acknowledgement, renewal closes it, audited");
 
 console.log("\nAll database checks passed.");
