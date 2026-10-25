@@ -26,6 +26,8 @@ A central register of the security deposits (FDRs, joint FDRs, bank guarantees a
 
 Access rules are enforced in Postgres with Row Level Security; the UI only mirrors them. Workflow transitions (submit, verify, release…) run through `SECURITY DEFINER` functions that check role and state. Every insert, update and delete is written to an append-only `audit_logs` table by triggers. Sign-ins, document views and report exports are logged there too.
 
+A second factor (TOTP) is available to every account at **/account/security**: enrol with an authenticator app, verify a code, remove the factor. Set `REQUIRE_MFA=true` and officials — regional officers, AICTE verifiers, clearance officers, auditors, administrators — are held on that page until their session reaches `aal2`; the gate runs in `src/lib/supabase/proxy.ts` against the token's assurance level on every request, so it cannot be skipped by deep-linking. Turn on **Authentication → Multi-Factor Authentication (TOTP)** in Supabase before enabling it. A lost device is reset by an administrator in **Supabase → Authentication → Users** (remove the factor); recovery codes are a paid Supabase feature and are not relied on.
+
 A profile is created for every auth user. Role, institution and region come from `app_metadata` — the one place only the service role can write — and a trigger keeps them in sync when GoTrue writes `app_metadata` after the insert (users created from the Supabase dashboard, for example). Keys absent from `app_metadata` leave the profile untouched, so a portal edit is never clobbered by unrelated Supabase bookkeeping.
 
 ## How it works
@@ -48,11 +50,13 @@ A profile is created for every auth user. Role, institution and region come from
   - overdue-demand notices.
 
   Alerts are always shown in-app. They are emailed through Resend if you configure it, and texted to institutions that opt in under **Admin → Institutions** (`SMS_PROVIDER`: `mock` by default, `msg91` for a real gateway). Email and SMS run independently: a missing email key never stops the texts, a failed send is retried by the next run, and every attempt lands in `notification_deliveries` with the provider's response.
+- **Escalation desk.** The same job reconciles `deposit_escalations`: one open case for every instrument that has been lapsed longer than the escalation window (7 days by default, set under **Admin → Settings**), with the day count moving as it ages. A regional officer for that region — or an AICTE verifier or administrator — acknowledges a case with a note; role and region are checked in Postgres, the auditor reads without touching. The case closes by itself as soon as the institution files a renewal or the deposit is released, and its history is kept. Officials get one critical notice per lapsed instrument, the sidebar badges the open count, and every raise and acknowledgement is in the audit trail.
 - **Service levels.** Officials see average and 90th-percentile submission→verification time (last 90 days), renewal compliance (renewed ÷ renewed + lapsed) and the median / p90 age of open discrepancy flags on the dashboard, and can export the same figures from the **KPIs & service levels** report. With no sample yet every measure renders as “—”, not zero.
 - **Release.** The institution applies with the required documents (application letter and affidavit by default). A submitted request then needs three clearances — Grievance, Vigilance and PGRC. Each is signed (cleared / blocked, with a note) by an officer of that cell; a block stops approval and only an administrator can override it, with a recorded reason. Once every cell has cleared, a reviewer approves with the NOC reference, the deposit becomes *Released* and the reference is stored on the request. Institutions see the cell statuses but not the cells' internal notes. Above a configurable amount (₹10,00,000 by default, under **Admin → Settings**) approval takes two signatures: the reviewer's approval moves the request to *Second approval due* and freezes the NOC and refund quote, and an AICTE verifier or administrator — never the officer who signed first — records the second signature with a note before the deposit is released. Below the threshold one reviewer still decides.
 - **Refund quote.** Every release request shows an indicative refund: principal, simple interest accrued from the issue date (the deposit's own rate, or the configured default), and an early-release penalty when the deposit has not been held for the minimum period. Approving freezes that quote on the request as the sanctioned amount, so the figure is auditable and never recomputed retroactively. The rate card lives under **Admin → Settings**.
 - **Print / Save as PDF.** Reports and the deposit and release pages have a **Print / Save as PDF** button. The print stylesheet renders an A4 document: navigation, report filters and action controls are dropped, table headers repeat across pages, and a header line carries the record label and generation time. Printing is recorded in the audit trail as `report.export` with a `PDF · …` summary, so paper output is traceable like a CSV download.
 - **Retention & archival.** Settled deposits (released, replaced, rejected) become **Archival due** once the retention window — 10 years past maturity by default, set under **Admin → Settings** — has elapsed. Archiving freezes the record instead of deleting it: an administrator archives from the deposit page, the row stays readable to everyone who could read it before, every API write to it is refused, and the **Restore record** action reopens it. The **Archival due** report lists what is eligible, with the CSV export and the audit trail covering both actions.
+- **Sign-in security.** `/account/security` enrols a TOTP factor and shows whether the current session is stepped up, with the QR code and manual key, a verification step before the factor becomes active, and a discard action for an unfinished setup. With `REQUIRE_MFA=true` an official's session is gated at `aal1` until the code is verified.
 - **Queue ageing.** Pending verification, release requests and open demands carry a "Waiting 3d" badge from their submission date (amber at two days, red at five), and the dashboard's verification queue shows the same counter — so the oldest item is visible without opening each record.
 - **Documents.** The uploader accepts several files at once, by picker or drag-and-drop. Files are staged first rather than sent immediately, so one batch can mix types: each row carries its own document type (defaulting to the one selected) and can be changed before upload. Each file is validated (PDF/JPEG/PNG, up to 10 MB), uploaded on its own as one audited version, and reported row by row. A failure names the file and stops nothing — retry it from the same list without resending the rest.
 - **Clearance progress.** The releases list shows how many of the three cells have cleared ("Clearances 2/3", flagged red when a cell has blocked), and a release officer can switch the queue to only the releases waiting on their own cell.
@@ -141,7 +145,15 @@ npm run dev                  # http://localhost:3000
 | `npm run lint` | ESLint |
 | `npm run db:verify` | Apply the migration to an in-memory Postgres (PGlite) and exercise the workflow and RLS rules end to end. No Docker needed |
 | `npm run check` | `typecheck` + `lint` + `db:verify` in one go — the gate every change should pass |
+| `npm run test:e2e` | Playwright browser tests against a production build (see below) |
+| `npm run check:all` | `check` + `test:e2e` — what CI should run |
 | `npm run build` | Production build |
+
+### Browser tests
+
+`npm run test:e2e` builds the app, serves it on port 3100 and drives it with Playwright: the sign-in and wrong-password paths, the auditor's read-only chrome, an institute account refused by admin screens and the officer desk, the escalation desk's counters, the settings form's server-action round trip, and every portal route rendering for an administrator.
+
+It talks to the project in `.env.local`, so it needs the demo data (`npm run seed`) and the demo password (`E2E_PASSWORD`, default `Demo@12345`). Point it at an already-running server with `E2E_BASE_URL`, or change the port with `E2E_PORT`. The suite is serial (`workers: 1`) because it shares one demo project and Supabase's sign-in rate limit. It runs against a production build rather than `next dev`: a dev server's streamed shell can leave a fresh browser without a React root, which made every form click land before hydration. Install the browser once with `npx playwright install chromium`.
 
 ## Integration hooks
 
@@ -156,7 +168,7 @@ supabase/migrations/    schema, RLS, workflow functions, alert job, storage buck
 scripts/verify-sql.mjs  database test-suite (PGlite)
 scripts/seed.mjs        demo data
 src/proxy.ts            session refresh + auth gate
-src/app/(portal)/       dashboard, deposits, demands, releases, alerts, reports, audit, admin
+src/app/(portal)/       dashboard, deposits, demands, releases, alerts, escalations, reports, audit, admin
 src/app/api/            document viewer (signed URLs), CSV reports, cron
 src/lib/                auth, Supabase clients, labels, report definitions
 ```

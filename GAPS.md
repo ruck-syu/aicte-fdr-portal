@@ -19,24 +19,25 @@ This document lists only changes **worth implementing**, ordered by demo/complia
 | G2 | ✅ Automated refund / penalty calculator | **P0** | 1–1.5 d | §2.3, §8 penalty |
 | G3 | ✅ Pluggable bank verification adapter (mock-first) | **P0** | 1–2 d | §2.3 bank API, §3A |
 | G4 | ✅ KPI instrumentation (turnaround, renewal compliance, flag ageing) | **P0** | 0.5–1 d | §5 KPIs |
-| G5 | Browser E2E tests (SQL regression + `npm run check` shipped) | **P0** | 0.5–1 d | §5 testing |
+| G5 | ✅ Browser E2E tests (Playwright, 11 specs) | **P0** | 0.5–1 d | §5 testing |
 | G6 | ✅ APH rate card for demands (Table 1.4) | **P1** | 0.5–1 d | §1 background |
 | G7 | ✅ PDF export + print stylesheet | **P1** | 1 d | §2.2 reporting |
 | G8 | ✅ Region heatmap (region × status) | **P1** | 0.5–1 d | §2.2 analytics |
 | G9 | ✅ Read-only Auditor role | **P1** | 0.5 d | §3 roles |
 | G10 | ✅ Amount-threshold second approval for releases | **P1** | 1 d | §2.3 dynamic approvals |
-| G11 | MFA (TOTP) for officials | **P1** | 1 d | §4 security |
+| G11 | ✅ MFA (TOTP) for officials | **P1** | 1 d | §4 security |
 | G12 | ✅ Bulk / drag-drop document upload | **P2** | 0.5–1 d | §2.2 documents |
 | G13 | ✅ Retention & archival policy (in-place, no cold export) | **P2** | 1–2 d | §4 retention |
 | G14 | ✅ SMS channel for alerts | **P2** | 1 d | §2.2 alerts |
+| G15 | ✅ Escalation desk for lapsed deposits | **P1** | 0.5–1 d | §2.3 smart escalation |
 
-**Quick wins (< 0.5 d each):** all four shipped — see §5.
+**Quick wins (< 0.5 d each):** all four shipped — see §5. Every P0 and P1 item is now shipped; what remains is the P2 decisions in §4 and the deferred list in §6.
 
 **Explicitly deferred:** OCR/ML, blockchain, chatbot, native mobile app, Aadhaar eSign, payment rails. Rationale in §6.
 
 ---
 
-## 2. P0 — implement before the next demo (G5 is the only open item)
+## 2. P0 — shipped
 
 ### ✅ G1. Release clearance workflow (Grievance / Vigilance / PGRC) — shipped
 
@@ -173,7 +174,7 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 
 ---
 
-### G5. Regression + E2E tests for the new behaviour — partly shipped
+### ✅ G5. Regression + E2E tests for the new behaviour — shipped
 
 **Why.** The existing PGlite suite is strong but only covers what was built before this list. Every P0 item above must be provable.
 
@@ -189,11 +190,11 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 
 **Effort.** 1–2 days.
 
-**Partly shipped 2026-10-25.** `npm run check` chains `typecheck && lint && db:verify`, so the SQL suite can no longer be skipped. `db:verify` gained a regression section for G9 (the auditor reads every register, clearance note, document and the national audit trail, and is refused by `review_deposit`, `set_bank_check`, `record_clearance`, `decide_release`, `admin_update_profile`, `log_event` and the direct-insert policies). Every earlier item's checks remain in the same run — 29 assertions total. **Still open:** the Playwright browser flow (login → create user → register → verify → release → clearances → approve), which needs a live seeded project and a browser in CI, neither of which this repo has.
+**Shipped 2026-10-26, in two parts.** `npm run check` chains `typecheck && lint && db:verify`, so the SQL suite can no longer be skipped; `db:verify` carries a regression section for every item above, 33 assertions in one run. `playwright.config.ts` + `e2e/` add 11 browser tests on a production build: signed-out redirect, wrong password, auditor read-only chrome, institute accounts refused by admin routes and the escalation desk, an official seeing that desk in the sidebar, the auditor reading it without an acknowledge control, the settings form's server-action round trip, the desk's counters, the MFA page state, and every portal route rendering for an administrator. `npm run test:e2e` builds and serves on port 3100, or takes `E2E_BASE_URL`; `npm run check:all` runs both gates. **Deviation:** `check` stays fast (no browser, no network) and CI-oriented `check:all` is the combined gate — making the local gate depend on a seeded project would have made it un-runnable offline. The suite runs against `next start`, not `next dev`, because a dev server's streamed shell could leave a fresh browser without a React root, so form clicks landed before hydration.
 
 ---
 
-## 3. P1 — worth doing next (open items)
+## 3. P1 — shipped
 
 ### ✅ G6. APH rate card for demands — shipped (3 seeded rows)
 
@@ -245,13 +246,17 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 
 **Shipped 2026-10-24.** `20261024000000_second_approval_status.sql` adds `pending_second_approval` on its own (a new enum value cannot be used in the transaction that creates it) and `20261024000001_second_approval.sql` adds the settings threshold (default ₹10,00,000, editable under **Admin → Settings**), `release_requests.first_approved_by / _at / _note`, and a two-stage `decide_release()`: at or above the threshold the first approval parks the request with its NOC and refund quote frozen, and the second must come from an `aicte_verifier` or administrator who is not the officer who signed first, with a recorded note. The release page shows who approved first, what is still required, and only offers **Give second approval** to an eligible, different officer; the list badges the status and its waiting time, the pending-releases report includes both stages, and `dashboard_stats()` counts parked releases in `release_pending` with a separate `release_second_approval`. `db:verify` asserts the below-threshold single-signature path, the first-signature park, rejection of a regional officer and of the same officer, the required note, the frozen quote surviving the second signature, the release itself, and both status-change audit rows.
 
-### G11. MFA (TOTP) for officials — open
+### ✅ G11. MFA (TOTP) for officials — shipped
 
-**Why.** Spec asks for "strong authentication (ideally MFA)" (§4). Not implemented.
+**Why.** Spec asks for "strong authentication (ideally MFA)" (§4). Nothing was implemented.
 
-**Change.** Supabase Auth TOTP enrolment page (`/account/security`), recovery codes, and an AAL2 gate in middleware for `regional_officer` / `aicte_verifier` / `admin` when `REQUIRE_MFA=true`. Document the project-level setting in the README.
+**Change.** Supabase Auth TOTP enrolment at `/account/security`, recovery codes, and an AAL2 gate in the proxy for officials when `REQUIRE_MFA=true`.
 
-**Acceptance.** Official without AAL2 is redirected to enrolment; institute users unaffected; disable/re-enrol works. **Effort.** 1 day. **Note.** Cannot be covered by PGlite; verify manually in a staging project.
+**Shipped 2026-10-26.** `/account/security` lists the account's factors, enrols a new TOTP factor (QR from GoTrue's SVG, plus the manual key), verifies a code before the factor becomes active, steps an existing factor up, and removes a factor or discards an unfinished setup. `src/lib/supabase/proxy.ts` reads the access token's `aal` claim on every request: with `REQUIRE_MFA=true`, a `regional_officer` / `aicte_verifier` / `release_officer` / `auditor` / `admin` at `aal1` is redirected to the enrolment page (API routes and public paths excepted), and a signed-in visitor to `/login` is still bounced to the dashboard. Institution accounts are untouched. The sidebar carries **Sign-in security**, and the page documents the operator path for a lost device (remove the factor in **Supabase → Authentication → Users**).
+
+**Verified against the project.** A throwaway user was created, enrolled, verified with a generated TOTP code (token moved `aal1 → aal2`), a wrong code was refused (422), the factor was removed and the user deleted; the demo administrator's factor list was confirmed empty afterwards. The gate was exercised on a server started with `REQUIRE_MFA=true`: an administrator at `aal1` requesting `/dashboard` landed on `/account/security`, while an institute account signed in and reached the dashboard normally.
+
+**Deviations.** Recovery codes are Supabase's paid feature and are not relied on — the operator reset is the documented fallback. `e2e/` covers the page's rendered state, not an enrolment round trip, because a verified factor on a shared demo account would gate every later test.
 
 ### ✅ G12. Bulk / drag-drop document upload — shipped
 
@@ -262,6 +267,14 @@ Add a "Service levels" card to `/dashboard` for officials, and a **"KPIs"** repo
 **Acceptance.** 5 files in one gesture; one failed upload does not abort the rest; versions and audit rows correct. **Effort.** 0.5–1 day.
 
 **Shipped 2026-10-25.** The uploader stages a batch instead of sending it file by file on arrival: the picker and the drop zone add rows, each row keeps its own document type (editable before upload, since one drop often mixes an FDR scan with an affidavit), and a single **Upload N files** sends them sequentially so version numbers stay ordered. A failure marks only that row, names the reason, and leaves the attachment on the file input for a retry — the rest of the batch is unaffected. Invalid files (wrong MIME, over 10 MB) are held as `rejected` rows that never reach storage, with remove buttons on every unfinished row.
+
+### ✅ G15. Escalation desk for lapsed deposits — shipped
+
+**Why.** The spec asks for "smart escalation" (§2.3). `run_alerts()` already told the institution that a case had been "escalated to the AICTE Approval Bureau" after `escalation_days` — but nothing was escalated: no officer had a queue, and nothing recorded whether anyone acted.
+
+**Change.** A `deposit_escalations` table with one row per lapsed instrument, reconciled by `sync_escalations()` on every cron run (service-role only): it opens a case past the window, keeps `days_lapsed` current, and closes it by itself when the deposit is renewed, released, replaced or archived — reopening starts a fresh episode rather than inheriting the old acknowledgement. `acknowledge_escalation()` records the officer and note, refusing anyone who is not a regional officer for that region (or a verifier / administrator), and writes an audit note. Officials get one critical `escalation_officer` notice per lapsed instrument; the role check, the region check and the read scope are all in Postgres.
+
+**Shipped 2026-10-26.** `20261026000003_escalation_desk.sql` adds the table, the `escalation_overview` view, both functions and RLS (readable wherever the institution is readable, no write grant at all). `/escalations` is the desk: open / unacknowledged / closed / all views, the window and the day count, institution and deposit links, and an inline acknowledge with a note. The sidebar badges the open count for officials, `/api/cron/alerts` runs the reconcile pass and returns how many cases it touched, and `db:verify` covers the window, the officers-only notice, idempotency, region and role refusals for the auditor and an institution, the audit rows, direct-write denial, service-role-only execution and auto-closure on renewal.
 
 ---
 
@@ -374,18 +387,18 @@ Ship P0 before any judging round; treat P1 as the "completeness" story.
 | ✅ §2.2 dashboard | Built | G4 |
 | ✅ §2.2 document mgmt | Built (staged bulk upload, per-file type, retry) | — (G12 done) |
 | ✅ §2.2 search/filter | Built (global search, institution profile, trigram-backed ILIKE) | — (QW3 done) |
-| ✅ §2.2 alerts | Built (in-app, email, SMS opt-in; ageing visible) | — (G14 done; auto-escalation still G4) |
+| ✅ §2.2 alerts | Built (in-app, email, SMS opt-in; ageing visible) | — (G14 done) |
 | ✅ §2.2 reporting | Built (CSV on every register + print/PDF) | — |
 | ✅ §2.3 bank API | Built (mock adapter + evidence) | — (G3 done) |
 | §2.3 OCR/ML | Missing | Deferred |
 | §2.3 blockchain | Missing | Deferred (hash anchor option) |
-| §2.3 smart escalation | Partial (ageing visible) | G4 (auto-escalation) |
+| ✅ §2.3 smart escalation | Built (auto-escalation with a regional desk) | — (G15 done) |
 | ✅ §2.3 dynamic approvals | Built (two signatures at or above the threshold) | — (G10 done) |
 | §2.3 mobile/chatbot | Partial | Deferred |
 | §2.3 eSign | Missing | Deferred |
 | ✅ §2.3 refund calculator | Built (stored sanction) | — (G2 done) |
 | ✅ §3 roles | Built (4 operational roles + clearance officer + read-only auditor) | — (G9 done) |
-| §4 security | Partial (retention done; MFA open) | G11 |
+| ✅ §4 security | Built (retention, archival, TOTP with a step-up gate) | — (G11 done) |
 | ✅ §5 KPIs | Built (90-day turnaround, renewal, flag ageing) | — (G4 done) |
-| §5 testing | Partial (SQL regression + `npm run check`; no browser E2E) | G5 |
+| ✅ §5 testing | Built (33 SQL assertions + 11 browser tests) | — (G5 done) |
 | §6 roadmap Bank/E-Pay | Missing | Deferred |
