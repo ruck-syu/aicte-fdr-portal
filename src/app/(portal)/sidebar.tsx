@@ -1,4 +1,5 @@
 import {
+  AlertOctagon,
   Banknote,
   Bell,
   Building2,
@@ -27,7 +28,7 @@ const iconCls = "size-4 shrink-0 opacity-80";
 export async function Sidebar() {
   const user = await requireUser();
   const supabase = await createClient();
-  const [{ data: unread }, { count: pending }, { count: pendingClearances }] = await Promise.all([
+  const [{ data: unread }, { count: pending }, { count: pendingClearances }, { count: escalations }] = await Promise.all([
     supabase.rpc("unread_notification_count"),
     isOfficial(user.role)
       ? supabase.from("deposits").select("id", { count: "exact", head: true }).eq("status", "submitted")
@@ -41,6 +42,9 @@ export async function Sidebar() {
           .select("id", { count: "exact", head: true })
           .eq("status", "pending")
           .eq("cell", user.clearance_cell)
+      : Promise.resolve({ count: 0 }),
+    isOfficial(user.role)
+      ? supabase.from("deposit_escalations").select("id", { count: "exact", head: true }).is("closed_at", null)
       : Promise.resolve({ count: 0 }),
   ]);
   const official = isOfficial(user.role);
@@ -73,12 +77,20 @@ export async function Sidebar() {
         <Bell className={iconCls} /> Alerts
       </NavLink>
       {official && (
+        <NavLink href="/escalations" badge={escalations ?? 0}>
+          <AlertOctagon className={iconCls} /> Escalations
+        </NavLink>
+      )}
+      {official && (
         <NavLink href="/reports">
           <FileBarChart className={iconCls} /> Reports
         </NavLink>
       )}
       <NavLink href="/audit">
         <FileClock className={iconCls} /> Audit trail
+      </NavLink>
+      <NavLink href="/account/security">
+        <ShieldCheck className={iconCls} /> Sign-in security
       </NavLink>
       {user.role === "admin" && (
         <>

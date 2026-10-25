@@ -302,6 +302,36 @@ export interface AuditLog {
   changes: Record<string, unknown> | null;
 }
 
+/** A lapsed instrument the daily job has escalated to the regional officer. */
+export interface Escalation {
+  id: string;
+  deposit_id: string;
+  institution_id: string;
+  days_lapsed: number;
+  opened_at: string;
+  updated_at: string;
+  acknowledged_by: string | null;
+  acknowledged_at: string | null;
+  note: string | null;
+  closed_at: string | null;
+}
+
+export interface EscalationOverview extends Escalation {
+  reference_no: string;
+  instrument_type: InstrumentType;
+  instrument_number: string;
+  bank_name: string;
+  amount: number;
+  maturity_date: string;
+  institution_name: string;
+  institution_aicte_id: string;
+  region: Region;
+  state: string;
+  acknowledged_by_name: string | null;
+  acknowledged_by_email: string | null;
+  is_open: boolean;
+}
+
 export interface Notification {
   id: string;
   institution_id: string | null;

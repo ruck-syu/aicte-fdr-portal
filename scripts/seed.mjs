@@ -119,6 +119,7 @@ const { count } = await db.from("deposits").select("id", { count: "exact", head:
 if (count) {
   console.log(`• ${count} deposits already present: skipping deposit data`);
   await db.rpc("run_alerts");
+  must(await db.rpc("sync_escalations"), "sync_escalations");
   process.exit(0);
 }
 
@@ -288,5 +289,7 @@ console.log("✓ demands, deposits, documents, flags, comments and release reque
 
 const alerts = must(await db.rpc("run_alerts"), "run_alerts");
 console.log(`✓ generated ${alerts} alerts`);
+const escalations = must(await db.rpc("sync_escalations"), "sync_escalations");
+console.log(`✓ reconciled ${escalations} escalation rows (lapsed deposits past the window)`);
 console.log("\nSign in with any of:");
 for (const u of users) console.log(`  ${u.email.padEnd(26)} ${u.role}`);
