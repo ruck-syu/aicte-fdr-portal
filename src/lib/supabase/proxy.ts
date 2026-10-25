@@ -4,6 +4,10 @@ import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "@/lib/env";
 
 const PUBLIC_PATHS = ["/login", "/api/cron"];
 
+/** Roles that must carry a second factor when REQUIRE_MFA is on. */
+const MFA_ROLES = ["regional_officer", "aicte_verifier", "release_officer", "auditor", "admin"];
+const MFA_PATH = "/account/security";
+
 /** Refreshes the auth session cookie and redirects anonymous visitors to /login. */
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -41,6 +45,22 @@ export async function updateSession(request: NextRequest) {
     url.pathname = "/dashboard";
     url.search = "";
     return NextResponse.redirect(url);
+  }
+
+  // Step-up gate. The assurance level travels in the access token, so this is
+  // checked on every request; an officer whose session is still aal1 is sent to
+  // the enrolment page until the code is verified (and the token refreshed).
+  if (process.env.REQUIRE_MFA === "true" && signedIn && !isPublic && !pathname.startsWith("/api/")) {
+    const claims = data?.claims as { aal?: string; app_metadata?: { role?: string } } | undefined;
+    const role = claims?.app_metadata?.role;
+    if (role && MFA_ROLES.includes(role) && claims?.aal !== "aal2" && pathname !== MFA_PATH) {
+      const url = request.nextUrl.clone();
+      url.pathname = MFA_PATH;
+      url.search = "";
+      const redirect = NextResponse.redirect(url);
+      response.cookies.getAll().forEach((c) => redirect.cookies.set(c));
+      return redirect;
+    }
   }
   return response;
 }
